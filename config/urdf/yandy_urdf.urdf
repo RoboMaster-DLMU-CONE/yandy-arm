@@ -97,10 +97,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-2.4"
+      upper="2.4"
+      effort="50"
+      velocity="8" />
   </joint>
   <link
     name="link_2">
@@ -156,9 +156,9 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="2.7"
+      effort="50"
+      velocity="8" />
   </joint>
   <link
     name="link_3">
@@ -213,10 +213,10 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
+      lower="-3.2"
       upper="0"
-      effort="0"
-      velocity="0" />
+      effort="50"
+      velocity="8" />
   </joint>
   <link
     name="link_4">
@@ -260,7 +260,7 @@
   </link>
   <joint
     name="joint_4"
-    type="revolute">
+    type="continuous">
     <origin
       xyz="0.142524819154464 0.158289847826683 0.037999999999854"
       rpy="-1.57079632679561 0 -0.733038285837583" />
@@ -271,10 +271,8 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      effort="50"
+      velocity="8" />
   </joint>
   <link
     name="link_5">
@@ -330,8 +328,8 @@
       xyz="0 0 1" />
     <limit
       lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      upper="3.14"
+      effort="50"
+      velocity="8" />
   </joint>
 </robot>
