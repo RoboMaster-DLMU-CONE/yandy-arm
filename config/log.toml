@@ -1,0 +1,9 @@
+async = true
+default_name = "yandy"
+
+[console_sink]
+enable = true
+
+[file_sink]
+enable = true
+path = "/home/ww/tmp/yandy.log"
