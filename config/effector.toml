@@ -1,0 +1,3 @@
+id = 7
+velocity_pid = { kp = 0.7, ki = 0.001, kd = 0.0 }
+velocity = 5.0 # rad / s
