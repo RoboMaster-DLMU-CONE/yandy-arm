@@ -1,0 +1,6 @@
+include(Modules/FindBoost)
+include(Modules/FindOpenCV)
+include(Modules/FindOpenVINO)
+include(Modules/FindPinocchio)
+include(Modules/FindSpdlog)
+include(Modules/FindToml++)
