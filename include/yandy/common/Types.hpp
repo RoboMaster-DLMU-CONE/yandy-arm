@@ -8,6 +8,9 @@ namespace yandy::common
     // 关节数量
     constexpr int JOINT_NUM = 5;
 
+    using VectorJ = Eigen::Matrix<double, JOINT_NUM, 1>;
+    using Vector6 = Eigen::Matrix<double, 6, 1>; // 用于空间力向量 (Fx,Fy,Fz, Tx,Ty,Tz)
+
     // 机械臂状态
     struct JointState
     {
