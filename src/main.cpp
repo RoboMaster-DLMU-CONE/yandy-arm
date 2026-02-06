@@ -2,6 +2,8 @@
 #include <yandy/core/Logger.hpp>
 #include <yandy/modules/ArmHW.hpp>
 
+#include "yandy/modules/DynamicsSolver.hpp"
+
 int main()
 {
     yandy::core::init_logging();
@@ -10,6 +12,7 @@ int main()
 
     OneMotor::Can::CanDriver driver("can0");
     yandy::modules::ArmHW arm_hw(driver);
+    yandy::modules::DynamicsSolver solver;
 
     return 0;
 }
