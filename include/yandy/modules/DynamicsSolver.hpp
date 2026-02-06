@@ -33,6 +33,26 @@ namespace yandy::modules
         // 获取末端执行器位姿 (用于视觉对齐)
         // 返回: 4x4 变换矩阵 (Isometry3d)
         Eigen::Isometry3d getEndEffectorPose() const;
+        /**
+            * @brief 数值法逆运动学求解 (CLIK算法)
+            *
+            * @param target_pose 期望的末端位姿 (基座坐标系)
+            * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
+            * @param tol         位置误差容忍度 (单位: m 或 rad)
+            * @param max_iter    最大迭代次数
+            * @return std::optional<VectorJ> 如果收敛返回关节角，否则返回 nullopt
+            */
+        std::optional<common::VectorJ> solveIK(
+            const Eigen::Isometry3d& target_pose,
+            const common::VectorJ& q_guess,
+            double tol = 1e-4,
+            int max_iter = 100,
+            bool position_only = false
+        );
+
+        // 获取 Pinocchio 模型和数据
+        pinocchio::Model& getModel() { return m_model; }
+        pinocchio::Data& getData() { return m_data; }
 
     private:
         pinocchio::Model m_model;
@@ -42,9 +62,12 @@ namespace yandy::modules
         common::VectorJ m_current_v{};
 
         int ee_joint_id_; // 末端关节在 Pinocchio 模型中的索引
+        pinocchio::FrameIndex ee_frame_id_{pinocchio::FrameIndex(-1)};
 
         // 预分配外力容器，避免实时分配内存
         pinocchio::container::aligned_vector<pinocchio::Force> f_ext_;
+        Eigen::Matrix<double, 6, 1> m_err;
+        Eigen::VectorXd m_v;
 
         std::shared_ptr<spdlog::logger> m_logger;
     };

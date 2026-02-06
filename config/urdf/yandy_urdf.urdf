@@ -260,7 +260,7 @@
   </link>
   <joint
     name="joint_4"
-    type="continuous">
+    type="revolute">
     <origin
       xyz="0.142524819154464 0.158289847826683 0.037999999999854"
       rpy="-1.57079632679561 0 -0.733038285837583" />
@@ -271,8 +271,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      effort="50"
-      velocity="8" />
+        lower="-6.28"
+        upper="6.28"
+        effort="50"
+        velocity="8" />
   </joint>
   <link
     name="link_5">
