@@ -17,7 +17,6 @@ target_link_libraries(yandy_arm_arm_hw
 )
 
 add_library(yandy_arm_effector STATIC modules/Effector.cpp)
-target_include_directories(yandy_arm_effector PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(yandy_arm_effector
         PUBLIC
         yandy_arm_logger
@@ -25,9 +24,17 @@ target_link_libraries(yandy_arm_effector
         tomlplusplus::tomlplusplus
 )
 
+add_library(yandy_arm_solver STATIC modules/DynamicsSolver.cpp)
+target_link_libraries(yandy_arm_solver
+        PUBLIC
+        yandy_arm_logger
+        pinocchio::pinocchio
+)
+
 add_executable(yandy_arm main.cpp)
 target_link_libraries(yandy_arm
         PUBLIC
         yandy_arm_arm_hw
         yandy_arm_effector
+        yandy_arm_solver
 )
