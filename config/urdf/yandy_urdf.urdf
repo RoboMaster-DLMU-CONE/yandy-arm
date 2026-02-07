@@ -334,4 +334,16 @@
       effort="50"
       velocity="8" />
   </joint>
+  <link name="gripper_tcp">
+      <inertial>
+        <mass value="0.001" />
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+      </inertial>
+  </link>
+  <joint name="joint_tcp" type="fixed">
+      <parent link="link_5" />
+      <child link="gripper_tcp" />
+      <origin xyz="0.2 0 0.035" rpy="0 0 0" />
+  </joint>
 </robot>
