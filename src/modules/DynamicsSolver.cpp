@@ -25,16 +25,28 @@ namespace yandy::modules
             throw;
         }
         m_data = pinocchio::Data(m_model);
-        if (m_model.existJointName("joint_5"))
+        if (m_model.existJointName("joint_tcp"))
+        {
+            ee_joint_id_ = m_model.getJointId("joint_tcp");
+        }
+        else if (m_model.existJointName("joint_5"))
         {
             ee_joint_id_ = m_model.getJointId("joint_5");
         }
         else
         {
-            m_logger->error("No valid 'joint_5' joint found, aborting...");
-            throw std::runtime_error("No valid 'joint_5' joint found");
+            m_logger->error("No valid end-effector joint found, aborting...");
+            throw std::runtime_error("No valid end-effector joint found");
         }
-        if (m_model.existFrame("link_5"))
+        if (m_model.existFrame("gripper_tcp"))
+        {
+            ee_frame_id_ = m_model.getFrameId("gripper_tcp");
+        }
+        else if (m_model.existFrame("joint_tcp"))
+        {
+            ee_frame_id_ = m_model.getFrameId("joint_tcp");
+        }
+        else if (m_model.existFrame("link_5"))
         {
             ee_frame_id_ = m_model.getFrameId("link_5");
         }
