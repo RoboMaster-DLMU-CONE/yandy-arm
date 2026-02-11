@@ -169,8 +169,7 @@ namespace yandy::module
         // 为了保持长宽比，通常需要加黑边。这里为了简化，直接resize，
         // 但对于RoboMaster能量机关，建议使用Letterbox以保证精度。
         // 这里使用简单的Resize演示，实际建议替换为Letterbox逻辑。
-        cv::Mat input_img;
-        cv::resize(raw_img, input_img, model_input_shape_);
+        cv::Mat input_img = this->letterbox(raw_img);
 
         // 准备输入 Tensor
         // 使用 input_img 的数据指针创建一个 Tensor (Zero-copy)
@@ -189,9 +188,6 @@ namespace yandy::module
         const auto& output_tensor = infer_request_.get_output_tensor(0);
         const float* output_buffer = output_tensor.data<float>();
 
-        // 计算缩放比例 (用于将坐标映射回原图)
-        const float scale_x = static_cast<float>(raw_img.cols) / model_input_shape_.width;
-        const float scale_y = static_cast<float>(raw_img.rows) / model_input_shape_.height;
 
         // 输出是一维数组排列的，stride = 24
         // [cx, cy, w, h, score, class, kpt1_x, kpt1_y, kpt1_v, ...]
@@ -210,27 +206,33 @@ namespace yandy::module
             unit.class_id = static_cast<int>(data[5]);
 
             // 解析 Box (cx, cy, w, h) -> Rect (x, y, w, h)
-            float cx = data[0];
-            float cy = data[1];
-            float w = data[2];
-            float h = data[3];
+            float x1 = data[0];
+            float y1 = data[1];
+            float x2 = data[2];
+            float y2 = data[3];
 
-            int left = int((cx - 0.5 * w) * scale_x);
-            int top = int((cy - 0.5 * h) * scale_y);
-            int width = int(w * scale_x);
-            int height = int(h * scale_y);
+            auto restore_coord = [&](float x, float y) -> cv::Point2f
+            {
+                float rx = (x - pad_offset_.x) / scale_factor_;
+                float ry = (y - pad_offset_.y) / scale_factor_;
+                return cv::Point2f(rx, ry);
+            };
 
-            unit.box = cv::Rect(left, top, width, height);
+            cv::Point2f tl = restore_coord(x1, y1);
+            cv::Point2f br = restore_coord(x2, y2);
+            unit.box = cv::Rect(tl, br);
 
-            // 解析 6 个关键点
-            // 从索引 6 开始, 每 3 个一组 (x, y, conf)
             for (int k = 0; k < 6; ++k)
             {
-                float kpt_x = data[6 + k * 3] * scale_x;
-                float kpt_y = data[6 + k * 3 + 1] * scale_y;
+                float kpt_x = data[6 + k * 3];
+                float kpt_y = data[6 + k * 3 + 1];
                 float kpt_s = data[6 + k * 3 + 2];
 
-                unit.keypoints.emplace_back(kpt_x, kpt_y, kpt_s);
+                // 同样需要做坐标反算
+                cv::Point2f pt = restore_coord(kpt_x, kpt_y);
+
+                // 将 z 轴位置存放 confidence
+                unit.keypoints.emplace_back(pt.x, pt.y, kpt_s);
             }
 
             detections.push_back(unit);
@@ -253,29 +255,86 @@ namespace yandy::module
             if (res.keypoints.size() < 6) continue;
 
             const auto& pts = res.keypoints;
-            // 假设模型训练时的关键点顺序为:
-            // 0:上盖左, 1:上盖中, 2:上盖右
-            // 3:下盖左, 4:下盖中, 5:下盖右
 
-            // 1. 上盖连线 (黑白交界+中点) -> 0-1-2
-            cv::line(img, cv::Point(pts[0].x, pts[0].y), cv::Point(pts[1].x, pts[1].y), cv::Scalar(0, 0, 255), 2);
-            cv::line(img, cv::Point(pts[1].x, pts[1].y), cv::Point(pts[2].x, pts[2].y), cv::Scalar(0, 0, 255), 2);
-
-            // 2. 下盖连线 -> 3-4-5
-            cv::line(img, cv::Point(pts[3].x, pts[3].y), cv::Point(pts[4].x, pts[4].y), cv::Scalar(255, 0, 0), 2);
-            cv::line(img, cv::Point(pts[4].x, pts[4].y), cv::Point(pts[5].x, pts[5].y), cv::Scalar(255, 0, 0), 2);
-
-            // 3. 中点连线 (圆柱轴线) -> 1-4
-            cv::line(img, cv::Point(pts[1].x, pts[1].y), cv::Point(pts[4].x, pts[4].y), cv::Scalar(0, 255, 255), 2);
-
-            // 画出点
-            for (int k = 0; k < 6; k++)
+            int i_top_left = 2;
+            int i_top_center = 1;
+            int i_top_right = 3;
+            int i_btm_left = 4;
+            int i_btm_center = 0;
+            int i_btm_right = 5;
+            auto draw_pt = [&](int idx, cv::Scalar color)
             {
-                cv::circle(img, cv::Point(pts[k].x, pts[k].y), 4, cv::Scalar(255, 255, 0), -1);
-                // 标号便于调试
-                cv::putText(img, std::to_string(k), cv::Point(pts[k].x, pts[k].y), 0, 0.5, cv::Scalar(255, 255, 255));
-            }
+                cv::circle(img, cv::Point(pts[idx].x, pts[idx].y), 5, color, -1);
+                // 调试：把序号写在点旁边，确认没搞错
+                // cv::putText(img, std::to_string(idx), cv::Point(pts[idx].x, pts[idx].y), 0, 0.5, cv::Scalar(255,255,255), 1);
+            };
+
+            // 上排用红色系，下排用蓝色系，中间用黄色
+            draw_pt(i_top_left, cv::Scalar(0, 0, 255)); // Red
+            draw_pt(i_top_center, cv::Scalar(0, 255, 255)); // Yellow
+            draw_pt(i_top_right, cv::Scalar(0, 0, 255)); // Red
+
+            draw_pt(i_btm_left, cv::Scalar(255, 0, 0)); // Blue
+            draw_pt(i_btm_center, cv::Scalar(0, 255, 255)); // Yellow
+            draw_pt(i_btm_right, cv::Scalar(255, 0, 0)); // Blue
+
+            // 3. 画线 (工字型)
+            // 为了线比较顺滑，我们定义一个画线lambda
+            auto draw_line = [&](int idx1, int idx2, cv::Scalar color)
+            {
+                cv::line(img, cv::Point(pts[idx1].x, pts[idx1].y),
+                         cv::Point(pts[idx2].x, pts[idx2].y), color, 2);
+            };
+
+            // --- 上横线 (Left -> Center -> Right) ---
+            draw_line(i_top_left, i_top_center, cv::Scalar(0, 255, 0)); // Green
+            draw_line(i_top_center, i_top_right, cv::Scalar(0, 255, 0)); // Green
+
+            // --- 下横线 (Left -> Center -> Right) ---
+            draw_line(i_btm_left, i_btm_center, cv::Scalar(0, 165, 255)); // Orange
+            draw_line(i_btm_center, i_btm_right, cv::Scalar(0, 165, 255)); // Orange
+
+            // --- 中竖线 (Top Center -> Bottom Center) ---
+            draw_line(i_top_center, i_btm_center, cv::Scalar(255, 0, 255)); // Purple
         }
+    }
+
+    cv::Mat EnergyDetector::letterbox(const cv::Mat& source)
+    {
+        int col = source.cols;
+        int row = source.rows;
+        int _max = MAX(col, row);
+
+        // 计算缩放比例，取较小值以适应目标尺寸
+        // 注意：这里目标是正方形 416x416
+        float scale = std::min((float)model_input_shape_.width / col, (float)model_input_shape_.height / row);
+
+        // 保存缩放因子供后续还原坐标使用
+        this->scale_factor_ = scale;
+
+        int new_w = round(col * scale);
+        int new_h = round(row * scale);
+
+        // 计算需要填充的黑边大小
+        int dw = (model_input_shape_.width - new_w) / 2;
+        int dh = (model_input_shape_.height - new_h) / 2;
+
+        this->pad_offset_ = cv::Point2f((float)dw, (float)dh);
+
+        // 1. 缩放
+        cv::Mat resized_img;
+        cv::resize(source, resized_img, cv::Size(new_w, new_h));
+        // 2. 填充边缘 (填充灰色 114)
+        cv::Mat dst_img;
+        cv::copyMakeBorder(resized_img, dst_img, dh, dh, dw, dw, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114));
+
+        // 此时 dst_img 大小可能因为 round 误差差 1 个像素，强制 resize 修正一下
+        if (dst_img.size() != model_input_shape_)
+        {
+            cv::resize(dst_img, dst_img, model_input_shape_);
+        }
+
+        return dst_img;
     }
 }
 
