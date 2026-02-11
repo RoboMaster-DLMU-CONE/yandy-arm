@@ -53,6 +53,8 @@ namespace yandy::module
         void drawResults(cv::Mat& img, const std::vector<EnergyUnit>& results);
 
     private:
+        float scale_factor_ = 1.0f;
+        cv::Point2f pad_offset_ = {0, 0};
         ov::Core core_;
         ov::CompiledModel compiled_model_;
         ov::InferRequest infer_request_;
