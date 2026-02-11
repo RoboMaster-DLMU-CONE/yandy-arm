@@ -2,11 +2,11 @@ add_library(yandy_arm_types INTERFACE)
 target_include_directories(yandy_arm_types INTERFACE ${PROJECT_SOURCE_DIR}/include)
 #target_link_libraries(yandy_arm_types INTERFACE eigen)
 
-add_library(yandy_arm_logger STATIC core/Logger.cpp)
+add_library(yandy_arm_logger SHARED core/Logger.cpp)
 target_include_directories(yandy_arm_logger PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(yandy_arm_logger PUBLIC spdlog::spdlog tomlplusplus::tomlplusplus)
 
-add_library(yandy_arm_arm_hw STATIC modules/ArmHW.cpp)
+add_library(yandy_arm_arm_hw SHARED modules/ArmHW.cpp)
 target_include_directories(yandy_arm_arm_hw PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(yandy_arm_arm_hw
         PUBLIC
@@ -16,7 +16,7 @@ target_link_libraries(yandy_arm_arm_hw
         tomlplusplus::tomlplusplus
 )
 
-add_library(yandy_arm_effector STATIC modules/Effector.cpp)
+add_library(yandy_arm_effector SHARED modules/Effector.cpp)
 target_link_libraries(yandy_arm_effector
         PUBLIC
         yandy_arm_logger
@@ -24,7 +24,7 @@ target_link_libraries(yandy_arm_effector
         tomlplusplus::tomlplusplus
 )
 
-add_library(yandy_arm_solver STATIC modules/DynamicsSolver.cpp)
+add_library(yandy_arm_solver SHARED modules/DynamicsSolver.cpp)
 target_link_libraries(yandy_arm_solver
         PUBLIC
         yandy_arm_logger

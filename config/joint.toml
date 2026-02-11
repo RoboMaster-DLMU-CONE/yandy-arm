@@ -3,31 +3,31 @@ can_id = 0x01
 master_id = 0x11
 offset = 0.0
 dir = -1.0
-mit_pid = { kp = 200.0, ki = 0.12, kd = 6.0 }
+mit_pid = { kp = 200.0, kd = 6.0 }
 
 [joint_2]
 can_id = 0x02
 master_id = 0x12
 offset = 0.0
 dir = -1.0
-mit_pid = { kp = 200.0, ki = 0.12, kd = 6.0 }
+mit_pid = { kp = 200.0, kd = 6.0 }
 
 [joint_3]
 can_id = 0x03
 master_id = 0x13
 offset = 0.0
 dir = -1.0
-mit_pid = { kp = 200.0, ki = 0.12, kd = 6.0 }
+mit_pid = { kp = 200.0, kd = 6.0 }
 
 [joint_4]
+id = 4
 offset = 0.0
 dir = 1.0
-position_pid = { kp = 120.0, ki = 0.05, kd = 3.0 }
-velocity_pid = { kp = 0.9, ki = 0.005, kd = 0.0 }
+mit_pid = { kp = 200.0, kd = 6.0 }
 
 [joint_5]
 can_id = 0x05
 master_id = 0x15
 offset = 0.0
 dir = 1.0
-mit_pid = { kp = 200.0, ki = 0.12, kd = 6.0 }
+mit_pid = { kp = 200.0, kd = 6.0 }

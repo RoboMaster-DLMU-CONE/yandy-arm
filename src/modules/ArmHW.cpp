@@ -1,24 +1,25 @@
 #include <yandy/modules/ArmHW.hpp>
 #include <yandy/core/Logger.hpp>
 
-#include <OneMotor/Motor/DJI/DjiMotor.hpp>
-#include <OneMotor/Motor/DM/DmMotor.hpp>
-#include <one/PID/PidChain.hpp>
-#include <one/PID/PidConfig.hpp>
+#include <one/motor/dm/DmMotor.hpp>
+
+#include <one/motor/dji/DjiMotor.hpp>
+#include <one/can/CanDriver.hpp>
 
 using one::pid::PidParams;
-using one::pid::PidConfig;
 using one::pid::PidController;
 using one::pid::PidChain;
-using OneMotor::Motor::DJI::GM6020_Voltage;
-using OneMotor::Motor::DJI::M3508;
-using OneMotor::Motor::DM::J4310_MIT;
-using OneMotor::Motor::DM::J4340_MIT;
-using OneMotor::Motor::DM::J8009_MIT;
-using OneMotor::Motor::DM::J10010L_MIT;
-using OneMotor::Can::CanDriver;
-using OneMotor::Motor::DJI::PIDFeatures;
+using namespace one::motor;
+using dji::GM6020_Voltage;
+using dji::M3508;
+using dm::J4310;
+using dm::J4340;
+using dm::J8009;
+using dm::J10010L;
+using one::can::CanDriver;
 using std::make_unique;
+
+using namespace one::motor::units::literals;
 
 #define JOINT_CONFIG_PATH YANDY_CONFIG_PATH "joint.toml"
 
@@ -42,7 +43,7 @@ namespace yandy::modules
                 [&]<typename T>(const T& payload)
                 {
                     using StatusType = std::decay_t<T>;
-                    if constexpr (std::is_same_v<StatusType, OneMotor::Motor::DM::DmStatus>)
+                    if constexpr (std::is_same_v<StatusType, one::motor::dm::MotorStatus>)
                     {
                         raw_pos = payload.position.numerical_value_in(rad);
                         raw_vel = payload.velocity.numerical_value_in(rad / s);
@@ -75,7 +76,7 @@ namespace yandy::modules
             double target_vel = m_dirs[i] * cmd.v_des[i];
             double ff_torque = m_dirs[i] * cmd.tau_ff[i];
 
-            (void)m_motors[i]->setRefs(target_pos * rad, target_vel * rad / s, ff_torque * N * m);
+            (void)m_motors[i]->setUnitRefs(target_pos * rad, target_vel * rad / s, ff_torque * N * m);
         }
     }
 
@@ -118,69 +119,51 @@ namespace yandy::modules
     void ArmHW::parse_dm_motor(const toml::v3::node_view<toml::v3::node> joint_node, const size_t joint_index)
     {
         uint16_t can_id{}, master_id{};
-        float kp{}, ki{}, kd{};
+        float kp{}, kd{};
         can_id = joint_node["can_id"].value<uint16_t>().value();
         master_id = joint_node["master_id"].value<uint16_t>().value();
         m_dirs[joint_index] = joint_node["dir"].value<float>().value();
         m_offsets[joint_index] = joint_node["offset"].value<float>().value();
+
+        kp = joint_node["mit_pid"]["kp"].value<float>().value();
+        kd = joint_node["mit_pid"]["kd"].value<float>().value();
         switch (joint_index)
         {
         case 0:
             // J1 : 4340
-            m_motors[joint_index] = std::make_unique<J4340_MIT>(m_driver, can_id, master_id);
+            m_motors[joint_index] = std::make_unique<
+                J4340>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
         case 1:
             // J2 : 10010L
-            m_motors[joint_index] = std::make_unique<J10010L_MIT>(m_driver, can_id, master_id);
+            m_motors[joint_index] = std::make_unique<J10010L>(m_driver, dm::Param{
+                                                                  can_id, master_id, dm::MITMode{kp, kd}
+                                                              });
         case 2:
             // J3 : 8009
-            m_motors[joint_index] = std::make_unique<J8009_MIT>(m_driver, can_id, master_id);
+            m_motors[joint_index] = std::make_unique<
+                J8009>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
         case 4:
             // J5 : 4310
-            m_motors[joint_index] = std::make_unique<J4310_MIT>(m_driver, can_id, master_id);
+            m_motors[joint_index] = std::make_unique<
+                J4310>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
         default: ;
         }
-        kp = joint_node["mit_pid"]["kp"].value<float>().value();
-        ki = joint_node["mit_pid"]["ki"].value<float>().value();
-        kd = joint_node["mit_pid"]["kd"].value<float>().value();
-        (void)m_motors[joint_index]->setPidParams(kp, ki, kd);
         m_logger->info(
-            "J{} DM motor parsed: can_id: {}, master_id: {}, dir: {}, offset: {}, MIT params: {}, {}, {}",
+            "J{} DM motor parsed: can_id: {}, master_id: {}, dir: {}, offset: {}, MIT params: {}, {}",
             joint_index + 1, can_id, master_id,
-            m_dirs[joint_index], m_offsets[joint_index], kp, ki, kd);
+            m_dirs[joint_index], m_offsets[joint_index], kp, kd);
     }
 
     void ArmHW::parse_dji_motor(toml::v3::node_view<toml::v3::node> joint_node, size_t joint_index)
     {
-        float kp{}, ki{}, kd{};
+        float kp{}, kd{};
+        const uint8_t id = joint_node["id"].value<uint8_t>().value();
         m_dirs[joint_index] = joint_node["dir"].value<float>().value();
         m_offsets[joint_index] = joint_node["offset"].value<float>().value();
-        kp = joint_node["position_pid"]["kp"].value<float>().value();
-        ki = joint_node["position_pid"]["ki"].value<float>().value();
-        kd = joint_node["position_pid"]["kd"].value<float>().value();
+        kp = joint_node["mit_pid"]["kp"].value<float>().value();
+        kd = joint_node["mit_pid"]["kd"].value<float>().value();
 
-        const PidParams<> pos_params{
-            .Kp = kp,
-            .Ki = ki,
-            .Kd = kd,
-            .MaxOutput = 20000,
-            .Deadband = 0,
-            .IntegralLimit = 5000,
-        };
-        const PidConfig<one::pid::Positional, float, PIDFeatures> pos_config = {pos_params};
-        kp = joint_node["velocity_pid"]["kp"].value<float>().value();
-        ki = joint_node["velocity_pid"]["ki"].value<float>().value();
-        kd = joint_node["velocity_pid"]["kd"].value<float>().value();
-        const PidParams<> ang_params{
-            .Kp = kp,
-            .Ki = ki,
-            .Kd = kd,
-            .MaxOutput = 20000,
-            .Deadband = 0,
-            .IntegralLimit = 8000,
-        };
-        const PidConfig<one::pid::Positional, float, PIDFeatures> ang_config = {ang_params};
-        PidChain pid_chain(pos_config, ang_config);
-        m_motors[joint_index] = std::make_unique<GM6020_Voltage<4, decltype(pid_chain)>>(m_driver, pid_chain);
+        m_motors[joint_index] = std::make_unique<GM6020_Voltage>(m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
         m_logger->info(
             "J{} DJI motor parsed: dir: {}, offset: {}",
