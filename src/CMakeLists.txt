@@ -31,10 +31,31 @@ target_link_libraries(yandy_arm_solver
         pinocchio::pinocchio
 )
 
+add_library(yandy_arm_vision_system SHARED modules/VisionSystem.cpp)
+target_link_directories(yandy_arm_vision_system
+        PUBLIC
+        /opt/MVS/lib/64/
+)
+target_include_directories(yandy_arm_vision_system
+        PUBLIC
+        /opt/MVS/include
+        ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(yandy_arm_vision_system
+        PUBLIC
+        yandy_arm_types
+        yandy_arm_logger
+        ${OpenCV_LIBS}
+        openvino
+        MvCameraControl
+)
+
+
 add_executable(yandy_arm main.cpp)
 target_link_libraries(yandy_arm
         PUBLIC
         yandy_arm_arm_hw
         yandy_arm_effector
         yandy_arm_solver
+        tomlplusplus::tomlplusplus
 )

@@ -1,12 +1,5 @@
 add_executable(yandy_simulate main.cpp)
 
-include(FetchContent)
-FetchContent_Declare(
-        rerun_sdk
-        URL https://github.com/rerun-io/rerun/releases/latest/download/rerun_cpp_sdk.zip
-)
-
-FetchContent_MakeAvailable(rerun_sdk)
 
 find_package(Curses REQUIRED)
 
