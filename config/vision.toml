@@ -1,2 +1,13 @@
+[yolo]
 thres = 0.5
 device = "CPU"
+model = "best.onnx" # 需要放在config/yolo下
+
+[camera]
+
+intrinsics = [
+    612.4961, 0.0, 482.8151,
+    0.0, 612.3061, 301.7057,
+    0.0, 0.0, 1.0
+]
+distortion = [-0.3433, 0.1684, 0.0, 0.0, 0.0]
