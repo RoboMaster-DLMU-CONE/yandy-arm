@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by
+Stephen Brawner (brawner@gmail.com) 
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
@@ -211,13 +212,27 @@
     <child
       link="link_3" />
     <axis
-      xyz="0 0 -1" />
+      xyz="0 0 1" />
     <limit
-      lower="-3.2"
-      upper="0"
+      lower="0"
+      upper="3.2"
       effort="50"
       velocity="8" />
   </joint>
+  <joint name="camera_joint" type="fixed">
+    <parent link="link_3" />
+    <child link="camera_optical_frame" />
+    <!-- origin:
+             rpy: 旋转使得 Z轴指向镜头前方, X轴指向图像右侧, Y轴指向图像下方
+             对应 opencv 坐标轴
+        -->
+    <origin xyz="0.06 0.18 0.038" rpy="0 -1.5707 3.9269" />
+  </joint>
+  <link name="camera_optical_frame">
+    <mass value="0.001" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+  </link>
   <link
     name="link_4">
     <inertial>
@@ -271,10 +286,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-        lower="-6.28"
-        upper="6.28"
-        effort="50"
-        velocity="8" />
+      lower="-6.28"
+      upper="6.28"
+      effort="50"
+      velocity="8" />
   </joint>
   <link
     name="link_5">
@@ -335,15 +350,15 @@
       velocity="8" />
   </joint>
   <link name="gripper_tcp">
-      <inertial>
-        <mass value="0.001" />
-        <origin xyz="0 0 0" rpy="0 0 0" />
-        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
-      </inertial>
+    <inertial>
+      <mass value="0.001" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
   </link>
   <joint name="joint_tcp" type="fixed">
-      <parent link="link_5" />
-      <child link="gripper_tcp" />
-      <origin xyz="0.2 0 0.035" rpy="0 0 0" />
+    <parent link="link_5" />
+    <child link="gripper_tcp" />
+    <origin xyz="0.2 0 0.035" rpy="0 0 0" />
   </joint>
 </robot>
