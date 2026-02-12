@@ -360,5 +360,10 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="link_5" />
     <child link="gripper_tcp" />
     <origin xyz="0.2 0 0.035" rpy="0 0 0" />
+    <limit
+          lower="0"
+          upper="0"
+          effort="50"
+          velocity="8" />
   </joint>
 </robot>

@@ -25,9 +25,9 @@ namespace yandy::modules
             throw;
         }
         m_data = pinocchio::Data(m_model);
-        if (m_model.existJointName("joint_tcp"))
+        if (m_model.existJointName("joint_5"))
         {
-            ee_joint_id_ = m_model.getJointId("joint_tcp");
+            m_ee_joint_id = m_model.getJointId("joint_5");
         }
         else
         {
@@ -36,7 +36,7 @@ namespace yandy::modules
         }
         if (m_model.existFrame("gripper_tcp"))
         {
-            ee_frame_id_ = m_model.getFrameId("gripper_tcp");
+            m_tcp_frame_id = m_model.getFrameId("gripper_tcp");
         }
         else
         {
@@ -75,7 +75,7 @@ namespace yandy::modules
             // 我们输入的是“世界坐标系”下的力，所以需要转换
             // 获取末端关节在世界坐标系下的位姿 (Rotation Matrix)
             // data.oMi[id] 存储了从 Local 到 World 的变换
-            const auto& iso_world_to_local = m_data.oMi[ee_joint_id_].inverse();
+            const auto& iso_world_to_local = m_data.oMi[m_ee_joint_id].inverse();
 
             // 将世界坐标系的力 (Force + Torque) 转换到局部坐标系
             // act() 是 Pinocchio 的空间变换函数
@@ -83,7 +83,7 @@ namespace yandy::modules
             const pinocchio::Force f_local = iso_world_to_local.act(f_world);
 
             // 施加到对应关节
-            f_ext_[ee_joint_id_] = f_local;
+            f_ext_[m_ee_joint_id] = f_local;
         }
         // 运行 RNEA
         return pinocchio::rnea(m_model, m_data,
@@ -100,7 +100,7 @@ namespace yandy::modules
 
     Eigen::Isometry3d DynamicsSolver::getEndEffectorPose() const
     {
-        pinocchio::SE3 se3 = m_data.oMf[ee_frame_id_];
+        pinocchio::SE3 se3 = m_data.oMf[m_tcp_frame_id];
 
         Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
         pose.translation() = se3.translation();
@@ -149,7 +149,7 @@ namespace yandy::modules
             pinocchio::updateFramePlacements(m_model, m_data);
 
             // 获取当前末端位姿
-            const pinocchio::SE3& oMcurr = m_data.oMf[ee_frame_id_];
+            const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
 
             if (position_only)
             {
@@ -162,7 +162,7 @@ namespace yandy::modules
                 }
 
                 Eigen::Matrix<double, 6, common::JOINT_NUM> J6;
-                pinocchio::computeFrameJacobian(m_model, m_data, q, ee_frame_id_,
+                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id,
                                                 pinocchio::LOCAL_WORLD_ALIGNED, J6);
                 const Eigen::Matrix<double, 3, common::JOINT_NUM> J = J6.topRows<3>();
 
@@ -188,7 +188,7 @@ namespace yandy::modules
                 }
 
                 Eigen::Matrix<double, 6, common::JOINT_NUM> J;
-                pinocchio::computeFrameJacobian(m_model, m_data, q, ee_frame_id_, pinocchio::LOCAL, J);
+                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id, pinocchio::LOCAL, J);
 
                 Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
                 H = J.transpose() * J;

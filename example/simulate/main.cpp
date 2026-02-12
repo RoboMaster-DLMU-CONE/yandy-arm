@@ -39,7 +39,7 @@ public:
         m_state.tau = VectorJ::Zero();
 
         // 初始姿态：避开奇异点，同时落在关节限位内
-        m_state.q << 0.0, 0.6, -1.5, 0.0, 0.8;
+        m_state.q << 0.0, 0.6, 1.5, 0.0, 0.8;
 
         // 初始化 last_cmd，避免第一帧飞车
         m_last_cmd.q_des = m_state.q;
@@ -161,14 +161,6 @@ int main(int argc, char** argv)
     const std::string urdf_file = YANDY_CONFIG_PATH "urdf/yandy_urdf.urdf";
     constexpr double dt = 0.004; // 250Hz
 
-    // --- Init Ncurses ---
-    initscr();
-    cbreak();
-    noecho();
-    keypad(stdscr, TRUE);
-    timeout(0);
-    curs_set(0);
-
     // --- Init Rerun ---
     auto rec = rerun::RecordingStream("robomaster_arm_sim");
     rec.spawn().exit_on_failure();
@@ -179,6 +171,14 @@ int main(int argc, char** argv)
     // --- Init Robot ---
     FakeArmHW hw(urdf_file);
     DynamicsSolver solver;
+
+    // --- Init Ncurses ---
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    timeout(0);
+    curs_set(0);
 
     // 加载几何模型 (专门用于管理 Visual Mesh)
     pinocchio::GeometryModel geom_model;
