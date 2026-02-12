@@ -7,6 +7,108 @@
 
 namespace yandy::module
 {
+    EnergyPoseSolver::EnergyPoseSolver(std::optional<cv::Mat> camera_matrix, std::optional<cv::Mat> dist_coeffs)
+    {
+        m_logger = core::create_logger("EnergyPoseSolver", spdlog::level::info);
+        m_logger->info("Constructing EnergyPoseSolver...");
+        auto tbl = toml::parse_file(YANDY_VISION_CONFIG);
+        if (camera_matrix)
+        {
+            camera_matrix_ = camera_matrix.value();
+        }
+        else
+        {
+            m_logger->info("try loading camera matrix from {}", YANDY_VISION_CONFIG);
+            camera_matrix_ = cv::Mat::eye(3, 3, CV_64F);
+            auto intrinsics_node = tbl["camera"]["intrinsics"].as_array();
+            int idx = 0;
+            for (auto&& val : *intrinsics_node)
+            {
+                // 将一维数组填入 3x3 矩阵 (行优先)
+                // at<double>(行, 列)
+                camera_matrix_.at<double>(idx / 3, idx % 3) = val.value<double>().value();
+                idx++;
+            }
+        }
+        if (dist_coeffs)
+        {
+            dist_coeffs_ = dist_coeffs.value();
+        }
+        else
+        {
+            m_logger->info("try loading camera distortion from {}", YANDY_VISION_CONFIG);
+            dist_coeffs_ = cv::Mat::zeros(1, 5, CV_64F);
+            auto distortion_node = tbl["camera"]["distortion"].as_array();
+            int idx = 0;
+            for (auto&& val : *distortion_node)
+            {
+                dist_coeffs_.at<double>(0, idx) = val.value<double>().value();
+                idx++;
+            }
+        }
+
+        float w = 30.0f / 1000.0f; // 30mm -> 0.03m
+        float h = 37.5f / 1000.0f; // 37.5mm -> 0.0375m
+
+        object_points_ = {
+            {-w, -h, 0}, // Top-Left  (2)
+            {w, -h, 0}, // Top-Right (3)
+            {w, h, 0}, // Bottom-Right (5)
+            {-w, h, 0} // Bottom-Left (4)
+        };
+        m_logger->info("EnergyPoseSolver constructed.");
+    }
+
+    bool EnergyPoseSolver::solve(const EnergyUnit& unit, Eigen::Isometry3d& output_pose) const
+    {
+        if (unit.keypoints.size() < 6) return false;
+
+        std::vector<cv::Point2f> image_points;
+        const auto& kpts = unit.keypoints;
+
+        // 2D 点的提取顺序必须与 3D 点 object_points_ 一一对应
+        // 0:下中, 1:上中, 2:上左, 3:上右, 4:下左, 5:下右
+        // 对应 object_points 的顺序 (TL, TR, BR, BL):
+
+        image_points.emplace_back(kpts[2].x, kpts[2].y); // Top-Left
+        image_points.emplace_back(kpts[3].x, kpts[3].y); // Top-Right
+        image_points.emplace_back(kpts[5].x, kpts[5].y); // Bottom-Right
+        image_points.emplace_back(kpts[4].x, kpts[4].y); // Bottom-Left
+
+        // 解算 PnP
+        cv::Mat rvec, tvec;
+        // SOLVEPNP_IPPE 是专门针对平面物体 (Planar targets) 的高精度算法，非常适合能量机关
+        const bool success = cv::solvePnP(object_points_, image_points,
+                                          camera_matrix_, dist_coeffs_,
+                                          rvec, tvec, false, cv::SOLVEPNP_IPPE);
+
+        if (!success) return false;
+
+        // 将 OpenCV 格式转换为 Eigen 格式 (给 Pinocchio 用)
+        cv::Mat R_cv;
+        cv::Rodrigues(rvec, R_cv); // 旋转向量 -> 旋转矩阵
+
+        Eigen::Matrix3d R_eigen;
+        Eigen::Vector3d t_eigen;
+
+        // OpenCV 是 double 还是 float 取决于输入，这里为了保险做一下 cast
+        for (int i = 0; i < 3; i++)
+        {
+            t_eigen(i) = tvec.at<double>(i);
+            for (int j = 0; j < 3; j++)
+            {
+                R_eigen(i, j) = R_cv.at<double>(i, j);
+            }
+        }
+
+        // 组装成 Isometry3d (T_camera_object)
+        output_pose = Eigen::Isometry3d::Identity();
+        output_pose.linear() = R_eigen;
+        output_pose.translation() = t_eigen;
+
+        return true;
+    }
+
     HikDriver::HikDriver()
     {
         m_logger = core::create_logger("HikDriver", spdlog::level::info);
@@ -86,7 +188,7 @@ namespace yandy::module
         if (MV_OK != nRet) return false;
 
         // 构造 cv::Mat (这是浅拷贝，注意生命周期，这里拷贝一份出去比较安全)
-        cv::Mat temp(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC3, pDataForRGB_);
+        const cv::Mat temp(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC3, pDataForRGB_);
         temp.copyTo(frame); // 深拷贝
 
         return true;
@@ -115,8 +217,8 @@ namespace yandy::module
     {
         const std::string model_path = YANDY_MODEL_PATH;
         auto tbl = toml::parse_file(YANDY_VISION_CONFIG);
-        auto device = tbl["device"].value<std::string>().value();
-        const auto thres = tbl["thres"].value<float>().value();
+        auto device = tbl["yolo"]["device"].value<std::string>().value();
+        const auto thres = tbl["yolo"]["thres"].value<float>().value();
         conf_threshold_ = thres;
 
         try

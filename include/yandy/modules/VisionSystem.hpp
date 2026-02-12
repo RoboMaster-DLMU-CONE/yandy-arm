@@ -7,6 +7,7 @@
 #include <vector>
 #include <iostream>
 #include <spdlog/logger.h>
+#include <eigen3/Eigen/Eigen>
 
 namespace yandy::module
 {
@@ -18,6 +19,31 @@ namespace yandy::module
         // 6个关键点: [x, y, conf]
         // 0:上左, 1:上中, 2:上右, 3:下左, 4:下中, 5:下右
         std::vector<cv::Point3f> keypoints;
+    };
+
+    class EnergyPoseSolver
+    {
+    public:
+        // 构造函数：传入相机内参
+        // camera_matrix: 3x3 内参矩阵
+        // dist_coeffs: 畸变系数 (D)
+        EnergyPoseSolver(std::optional<cv::Mat> camera_matrix = std::nullopt,
+                         std::optional<cv::Mat> dist_coeffs = std::nullopt);
+
+        // 核心解算函数
+        // 输入: 识别到的能量单元
+        // 输出: 4x4 变换矩阵 (Eigen::Isometry3d)，代表物体在相机坐标系下的位姿
+        // 返回: 是否解算成功
+        bool solve(const EnergyUnit& unit, Eigen::Isometry3d& output_pose) const;
+
+    private:
+        cv::Mat camera_matrix_;
+        cv::Mat dist_coeffs_;
+
+        // 3D 物体坐标 (世界坐标系，以能量单元中心为原点)
+        std::vector<cv::Point3f> object_points_;
+
+        std::shared_ptr<spdlog::logger> m_logger;
     };
 
     class HikDriver
@@ -60,7 +86,7 @@ namespace yandy::module
         ov::InferRequest infer_request_;
 
         float conf_threshold_{};
-        cv::Size model_input_shape_ = cv::Size(416, 416); // 根据你的ONNX截图
+        cv::Size model_input_shape_ = cv::Size(416, 416);
 
         // 预处理辅助
         cv::Mat letterbox(const cv::Mat& source);
