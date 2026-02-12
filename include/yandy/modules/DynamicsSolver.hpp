@@ -71,8 +71,8 @@ namespace yandy::modules
         common::VectorJ m_current_q{};
         common::VectorJ m_current_v{};
 
-        int ee_joint_id_; // 末端关节在 Pinocchio 模型中的索引
-        pinocchio::FrameIndex ee_frame_id_{static_cast<pinocchio::FrameIndex>(-1)};
+        pinocchio::JointIndex m_ee_joint_id{static_cast<pinocchio::JointIndex>(-1)}; // 末端关节在 Pinocchio 模型中的索引
+        pinocchio::FrameIndex m_tcp_frame_id{static_cast<pinocchio::FrameIndex>(-1)};
         pinocchio::FrameIndex camera_frame_id_{static_cast<pinocchio::FrameIndex>(-1)};
 
         // 预分配外力容器，避免实时分配内存
