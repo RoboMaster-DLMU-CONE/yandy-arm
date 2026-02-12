@@ -33,6 +33,15 @@ namespace yandy::modules
         // 获取末端执行器位姿 (用于视觉对齐)
         // 返回: 4x4 变换矩阵 (Isometry3d)
         Eigen::Isometry3d getEndEffectorPose() const;
+
+        // 获取相机光心相对于基座的位姿
+        // 调用前必须先调用 updateKinematics(q, v)
+        Eigen::Isometry3d getCameraPose();
+
+        // 将 PnP 结果转换到基座坐标系
+        // T_cam_obj: PnP 算出来的 (物体在相机系)
+        Eigen::Isometry3d transformObjectToBase(const Eigen::Isometry3d& T_cam_obj);
+
         /**
             * @brief 数值法逆运动学求解 (CLIK算法)
             *
@@ -40,6 +49,7 @@ namespace yandy::modules
             * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
             * @param tol         位置误差容忍度 (单位: m 或 rad)
             * @param max_iter    最大迭代次数
+            * @param position_only
             * @return std::optional<VectorJ> 如果收敛返回关节角，否则返回 nullopt
             */
         std::optional<common::VectorJ> solveIK(
@@ -62,7 +72,8 @@ namespace yandy::modules
         common::VectorJ m_current_v{};
 
         int ee_joint_id_; // 末端关节在 Pinocchio 模型中的索引
-        pinocchio::FrameIndex ee_frame_id_{pinocchio::FrameIndex(-1)};
+        pinocchio::FrameIndex ee_frame_id_{static_cast<pinocchio::FrameIndex>(-1)};
+        pinocchio::FrameIndex camera_frame_id_{static_cast<pinocchio::FrameIndex>(-1)};
 
         // 预分配外力容器，避免实时分配内存
         pinocchio::container::aligned_vector<pinocchio::Force> f_ext_;

@@ -29,10 +29,6 @@ namespace yandy::modules
         {
             ee_joint_id_ = m_model.getJointId("joint_tcp");
         }
-        else if (m_model.existJointName("joint_5"))
-        {
-            ee_joint_id_ = m_model.getJointId("joint_5");
-        }
         else
         {
             m_logger->error("No valid end-effector joint found, aborting...");
@@ -42,29 +38,21 @@ namespace yandy::modules
         {
             ee_frame_id_ = m_model.getFrameId("gripper_tcp");
         }
-        else if (m_model.existFrame("joint_tcp"))
-        {
-            ee_frame_id_ = m_model.getFrameId("joint_tcp");
-        }
-        else if (m_model.existFrame("link_5"))
-        {
-            ee_frame_id_ = m_model.getFrameId("link_5");
-        }
-        else if (m_model.existFrame("joint_5"))
-        {
-            ee_frame_id_ = m_model.getFrameId("joint_5");
-        }
-        else if (m_model.nframes > 0)
-        {
-            ee_frame_id_ = static_cast<pinocchio::FrameIndex>(m_model.nframes - 1);
-            m_logger->warn("End-effector frame not found, fallback to frame {}",
-                           m_model.frames[ee_frame_id_].name);
-        }
         else
         {
             m_logger->error("No valid end-effector frame found.");
             throw std::runtime_error("No valid end-effector frame found");
         }
+        if (m_model.existFrame("camera_optical_frame"))
+        {
+            camera_frame_id_ = m_model.getFrameId("camera_optical_frame");
+        }
+        else
+        {
+            m_logger->error("No valid camera-optical frame found.");
+            throw std::runtime_error("No valid camera-optical frame found");
+        }
+
         f_ext_.resize(m_model.njoints, pinocchio::Force::Zero());
 
         m_logger->info(" Model loaded. Joints: {}, DoF: {}", m_model.njoints, m_model.nv);
@@ -120,6 +108,19 @@ namespace yandy::modules
 
         return pose;
     }
+
+    Eigen::Isometry3d DynamicsSolver::getCameraPose()
+    {
+        return Eigen::Isometry3d(m_data.oMf[camera_frame_id_].toHomogeneousMatrix());
+    }
+
+    Eigen::Isometry3d DynamicsSolver::transformObjectToBase(const Eigen::Isometry3d& T_cam_obj)
+    {
+        // T_base_cam: 此时刻相机的位姿 (由 getCameraPose 算出)
+        const Eigen::Isometry3d T_base_cam = getCameraPose();
+        return T_base_cam * T_cam_obj;
+    }
+
 
     std::optional<common::VectorJ> DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
                                                            const common::VectorJ& q_guess, double tol, int max_iter,
