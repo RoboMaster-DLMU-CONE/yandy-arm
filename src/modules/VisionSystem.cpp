@@ -109,6 +109,16 @@ namespace yandy::module
         return true;
     }
 
+    cv::Mat& EnergyPoseSolver::get_camera_matrix()
+    {
+        return camera_matrix_;
+    }
+
+    cv::Mat& EnergyPoseSolver::get_dist_coeffs()
+    {
+        return dist_coeffs_;
+    }
+
     HikDriver::HikDriver()
     {
         m_logger = core::create_logger("HikDriver", spdlog::level::info);

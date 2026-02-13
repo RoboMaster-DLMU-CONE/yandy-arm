@@ -36,6 +36,9 @@ namespace yandy::module
         // 返回: 是否解算成功
         bool solve(const EnergyUnit& unit, Eigen::Isometry3d& output_pose) const;
 
+        cv::Mat& get_camera_matrix();
+        cv::Mat& get_dist_coeffs();
+
     private:
         cv::Mat camera_matrix_;
         cv::Mat dist_coeffs_;
