@@ -1,6 +1,7 @@
-#include <OneMotor/Can/CanDriver.hpp>
+#include <one/can/CanDriver.hpp>
 #include <yandy/core/Logger.hpp>
 #include <yandy/modules/ArmHW.hpp>
+#include <yandy/modules/FSM.hpp>
 
 #include "yandy/modules/DynamicsSolver.hpp"
 
@@ -10,9 +11,9 @@ int main()
 
     spdlog::info("Yandy Logger initialized.");
 
-    OneMotor::Can::CanDriver driver("can0");
-    yandy::modules::ArmHW arm_hw(driver);
-    yandy::modules::DynamicsSolver solver;
-
+    // one::can::CanDriver driver("can0");
+    // yandy::modules::ArmHW arm_hw(driver);
+    // yandy::modules::DynamicsSolver solver;
+    yandy::modules::YandyArmFSM fsm;
     return 0;
 }

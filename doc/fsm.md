@@ -29,7 +29,6 @@
 
 键盘：
 
-
 ## 状态
 
 ### NULL
@@ -42,11 +41,13 @@
 
 ### RESET
 
-不改变位置绝对值的情况下清除上位机程序里的累积值
+机械臂强制回到初始位置，同时清空各种累积值
 
-### FETCH
+### SWITCH_FETCH
 
-抓取最近的能量单元
+切换抓取状态
+抓取状态：通过视觉检测，定位到合适的位置，打开夹爪，检测绝对值并进行微调。
+再按一下进行夹取并返回原位。
 
 ### SWITCH_STORE
 
@@ -54,8 +55,47 @@
 首先检测末端上是否有矿；
 如果有矿，将矿带到空余的杆上，检测绝对值并进行微调。
 如果没有矿，就从有矿的杆子上进行取矿，检测绝对值进行微调。
-切回正常模式时，会松开末端执行器并回到存矿之前的位置，顺便重置上位机程序里对位置绝对值的累积，防止自定义控制器位姿改变导致飞车。
+切回正常模式时，会松开末端执行器并回到存矿之前的位置
 
 ### SWITCH_GRIP
 
 切换夹爪夹取状态
+
+## 状态图
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled
+    [*] --> ErrorMode: CMD_ERROR / emergency_stop
+    Disabled: 禁用输出
+    ErrorMode: 故障状态，禁止动作
+    ErrorMode: 需要 CMD_RESET 才能清除
+    ManualControl: [NULL状态] 正常规划
+    ManualControl: 内部修正指令 (Debug/Fix)：
+    ManualControl: - CMD_DEBUG_TOGGLE_HELD / toggle_held_flag
+    ManualControl: - CMD_DEBUG_INC_STORE / inc_storage_count
+    ManualControl: - CMD_DEBUG_DEC_STORE / dec_storage_count
+    ManualControl: 内部逻辑检查：
+    ManualControl: - CMD_SWITCH_STORE [store_logic_conflict] / log_store_conflict
+    FetchingMode: [FETCH状态]
+    FetchingMode: Entry 视觉定位 → 移动 → 开爪
+    FetchingMode: Exit 关爪
+    StorageMode: [STORE状态]
+    StorageMode: Entry 移动到存/取点
+    StorageMode: Exit 执行存/取动作 → 回位 → 更新计数
+    ErrorMode --> ManualControl: CMD_RESET / clear_error_flags
+    Disabled --> ManualControl: CMD_SWITCH_ENABLE / enable_output
+    ManualControl --> Disabled: CMD_SWITCH_ENABLE / disable_output
+    ManualControl --> FetchingMode: CMD_SWITCH_FETCH / action_vision_approach
+    FetchingMode --> ManualControl: CMD_SWITCH_FETCH [grip_success] / action_grip_success
+    FetchingMode --> ManualControl: CMD_SWITCH_FETCH [!grip_success] / action_grip_fail_log
+    ManualControl --> StorageMode: CMD_SWITCH_STORE [has_mineral && can_deposit] / action_move_to_deposit
+    ManualControl --> StorageMode: CMD_SWITCH_STORE [!has_mineral && can_retrieve] / action_move_to_retrieve
+    StorageMode --> ManualControl: CMD_SWITCH_STORE / action_finish_store_procedure
+    ManualControl --> ManualControl: -CMD_DEBUG_TOGGLE_HELD / toggle_held_flag
+    ManualControl --> ManualControl: -CMD_DEBUG_INC_STORE / inc_storage_count
+    ManualControl --> ManualControl: -CMD_DEBUG_DEC_STORE / dec_storage_count
+    ManualControl --> ManualControl: -CMD_SWITCH_STORE [store_logic_conflict] / log_store_conflict
+    ManualControl --> ManualControl: -CMD_RESET / action_clear_accumulators
+    ManualControl --> ManualControl: -CMD_SWITCH_GRIP / action_toggle_gripper
+```
