@@ -1,7 +1,3 @@
-//
-// Created by ww on 2026/2/13.
-//
-
 #ifndef YANDY_ARM_NBUF_HPP
 #define YANDY_ARM_NBUF_HPP
 
@@ -10,13 +6,15 @@
 #include <new>
 #include <utility>
 #include <optional>
+#include <thread>
 
 namespace yandy
 {
     // SPMC N-Buffer Class (Standard C++ implementation)
-    template<typename T, size_t N>
-    requires std::is_standard_layout_v<T> && (N >= 2)
-    class NBuf {
+    template <typename T, size_t N>
+        requires std::is_standard_layout_v<T> && (N >= 2)
+    class NBuf
+    {
     public:
         NBuf() = default;
 
@@ -29,7 +27,7 @@ namespace yandy
         {
             auto next_slot = (m_next_write_idx + 1) % N;
             auto& slot = m_slots[next_slot];
-            
+
             slot.version.fetch_add(1, std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             slot.data = data;
@@ -44,7 +42,7 @@ namespace yandy
         {
             auto next_slot = (m_next_write_idx + 1) % N;
             auto& slot = m_slots[next_slot];
-            
+
             slot.version.fetch_add(1, std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_seq_cst);
             slot.data = std::move(data);
@@ -88,15 +86,19 @@ namespace yandy
         T read() const noexcept
         {
             T copy{};
-            auto& slot = m_slots[m_latest_idx.load(std::memory_order_acquire)];
             size_t v1, v2;
-            do {
+            size_t idx;
+            do
+            {
+                idx = m_latest_idx.load(std::memory_order_acquire);
+                auto& slot = m_slots[idx];
+
                 v1 = slot.version.load(std::memory_order_acquire);
 
                 // 检查是否正在写入
-                if (v1 & 1) {
-                    // 在实际应用中，这里可能需要短暂等待
-                    // 但在用户态程序中，我们可以简单地继续循环
+                if (v1 & 1)
+                {
+                    std::this_thread::yield();
                     continue;
                 }
 
@@ -105,8 +107,9 @@ namespace yandy
                 std::atomic_thread_fence(std::memory_order_seq_cst);
 
                 v2 = slot.version.load(std::memory_order_acquire);
-            } while (v1 != v2);
-            
+            }
+            while (v1 != v2);
+
             return copy;
         }
 

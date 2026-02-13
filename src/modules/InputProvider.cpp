@@ -55,14 +55,13 @@ namespace yandy::modules
         {
             if (!error && m_running)
             {
-                m_logger->debug("Received UDP packet with {} bytes from {}:{}",
-                                bytes_transferred,
-                                m_remote_endpoint.address().to_string(),
-                                m_remote_endpoint.port());
+                const auto data_ptr = reinterpret_cast<const uint8_t*>(m_recv_buffer.data());
 
-                (void)m_par.push_data(reinterpret_cast<const uint8_t*>(m_recv_buffer.data()), bytes_transferred);
-                // 将数据包写入缓冲区
-                m_packet_buffer.write(m_des.get<YandyControlPack>());
+                auto result = m_par.push_data(data_ptr, bytes_transferred);
+                if (result)
+                {
+                    m_packet_buffer.write(m_des.get<YandyControlPack>());
+                }
 
                 // 重新开始接收下一个数据包
                 doReceive();
@@ -84,6 +83,11 @@ namespace yandy::modules
 
         UsbProvider::UsbProvider()
         {
+            m_logger = core::create_logger("UdpInputProvider", spdlog::level::info);
+            m_logger->info("Constructing UdpProvider, loading config from {}", YANDY_INPUT_CONFIG);
+
+            auto tbl = toml::parse_file(YANDY_INPUT_CONFIG);
+            auto device = tbl["usb"]["device"].value<std::string>().value();
         }
 
         bool UsbProvider::getLatestCommand(YandyControlPack& packet)
