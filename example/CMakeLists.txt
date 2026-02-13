@@ -8,3 +8,4 @@ FetchContent_MakeAvailable(rerun_sdk)
 
 add_subdirectory(simulate)
 add_subdirectory(vision)
+add_subdirectory(input)

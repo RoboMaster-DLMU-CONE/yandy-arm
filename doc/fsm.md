@@ -29,37 +29,45 @@
 
 键盘：
 
-## 状态
+## 机械臂上位机指令集 (Command List)
 
-### NULL
+| 指令枚举 (Enum)             | 功能描述 (Function)                                                                             |
+|:------------------------|:--------------------------------------------------------------------------------------------|
+| **`CMD_ERROR`**         | **急停**。立即停止所有动作并跳转至 `ErrorMode`（故障状态）。                                                      |
+| **`CMD_SWITCH_ENABLE`** | **启用/禁用输出**。在 `Disabled`（禁用）和 `ManualControl`（手动控制）状态之间切换。                                  |
+| **`CMD_RESET`**         | **复位**。<br>1. 在 `ErrorMode` 下：清除错误标志，恢复到手动模式。<br>2. 在 `ManualControl` 下：清除运动控制的位置累积值（重置原点）。 |
+| **`CMD_SWITCH_FETCH`**  | **切换抓取模式**。<br>**进入**：执行视觉定位并移动到预备点，张开夹爪。<br>**退出**：闭合夹爪，返回原位，并根据传感器结果更新“持有状态”。             |
+| **`CMD_SWITCH_STORE`**  | **切换存取模式**。<br>**进入**：根据当前是否持有矿石及库存量，自动规划移动到存矿或取矿点。<br>**退出**：执行存/取动作，返回原位，并自动更新库存计数。       |
+| **`CMD_SWITCH_GRIP`**   | **手动夹爪开关**。仅在 `ManualControl` 模式下有效，用于手动控制夹爪的开合。                                            |
+| **`CMD_TOGGLE_HELD`**   | **[调试] 强制切换持有状态**。手动修改 `has_mineral` 标志位（用于视觉/传感器误判时的修正）。                                   |
+| **`CMD_INC_STORE`**     | **[调试] 库存计数 +1**。强制增加逻辑库存数量。                                                                |
+| **`CMD_DEC_STORE`**     | **[调试] 库存计数 -1**。强制减少逻辑库存数量。                                                                |
 
-正常通过xyzrpy进行运动规划并输出
+## 代码
 
-### SWITCH_ENABLE
+```c++
+enum class YandyControlCmd : uint8_t
+{
+    CMD_NONE = 0x00, // 心跳/无操作
 
-切换规划和输出启用状态
+    // === 系统级指令 (System) ===
+    CMD_ERROR = 0x01, // 急停 (Emergency Stop) - 最高优先级
+    CMD_SWITCH_ENABLE = 0x02, // 启用/禁用输出 (Enable Toggle)
+    CMD_RESET = 0x03, // 复位 (Reset Error / Clear Accumulators)
 
-### RESET
+    // === 模式切换指令 (Mode Switching) ===
+    CMD_SWITCH_FETCH = 0x10, // 进入/退出 抓取模式 (Fetch Toggle)
+    CMD_SWITCH_STORE = 0x11, // 进入/退出 存取矿模式 (Store Toggle)
 
-机械臂强制回到初始位置，同时清空各种累积值
+    // === 手动操作指令 (Manual Action) ===
+    CMD_SWITCH_GRIP = 0x20, // 手动切换夹爪 (Gripper Toggle)
 
-### SWITCH_FETCH
-
-切换抓取状态
-抓取状态：通过视觉检测，定位到合适的位置，打开夹爪，检测绝对值并进行微调。
-再按一下进行夹取并返回原位。
-
-### SWITCH_STORE
-
-切换存取矿/正常模式
-首先检测末端上是否有矿；
-如果有矿，将矿带到空余的杆上，检测绝对值并进行微调。
-如果没有矿，就从有矿的杆子上进行取矿，检测绝对值进行微调。
-切回正常模式时，会松开末端执行器并回到存矿之前的位置
-
-### SWITCH_GRIP
-
-切换夹爪夹取状态
+    // === 调试/修正指令 (Debug / Override) ===
+    CMD_TOGGLE_HELD = 0x80, // 强制修改“持有矿石”状态
+    CMD_INC_STORE = 0x81, // 强制库存 +1
+    CMD_DEC_STORE = 0x82 // 强制库存 -1
+};
+```
 
 ## 状态图
 
@@ -99,3 +107,6 @@ stateDiagram-v2
     ManualControl --> ManualControl: -CMD_RESET / action_clear_accumulators
     ManualControl --> ManualControl: -CMD_SWITCH_GRIP / action_toggle_gripper
 ```
+
+## 键盘键位设定
+
