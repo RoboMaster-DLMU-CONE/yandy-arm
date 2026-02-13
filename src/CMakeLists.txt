@@ -1,6 +1,6 @@
 add_library(yandy_arm_types INTERFACE)
 target_include_directories(yandy_arm_types INTERFACE ${PROJECT_SOURCE_DIR}/include)
-#target_link_libraries(yandy_arm_types INTERFACE eigen)
+target_link_libraries(yandy_arm_types INTERFACE rpl::rpl)
 
 add_library(yandy_arm_logger SHARED core/Logger.cpp)
 target_include_directories(yandy_arm_logger PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -57,6 +57,18 @@ target_link_libraries(yandy_arm_fsm
         yandy_arm_logger
 )
 
+add_library(yandy_arm_input_provider SHARED
+        modules/InputProvider.cpp
+)
+
+target_link_libraries(yandy_arm_input_provider
+        PUBLIC
+        yandy_arm_types
+        yandy_arm_logger
+        HySerial::HySerial
+        tomlplusplus::tomlplusplus
+)
+
 
 add_executable(yandy_arm main.cpp)
 target_link_libraries(yandy_arm
@@ -66,5 +78,6 @@ target_link_libraries(yandy_arm
         yandy_arm_solver
         yandy_arm_vision_system
         yandy_arm_fsm
+        yandy_arm_input_provider
         tomlplusplus::tomlplusplus
 )

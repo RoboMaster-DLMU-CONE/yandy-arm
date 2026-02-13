@@ -1,0 +1,8 @@
+type = "udp" # udp / usb
+
+[udp]
+address = "127.0.0.1"
+port = 11451
+
+[usb]
+device = "/dev/ttyACM0"
