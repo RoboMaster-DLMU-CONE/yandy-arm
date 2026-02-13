@@ -69,6 +69,9 @@ target_link_libraries(yandy_arm_input_provider
         tomlplusplus::tomlplusplus
 )
 
+if (YANDY_BUILD_TELEOP_CLIENT)
+    add_subdirectory(teleop_client)
+endif ()
 
 add_executable(yandy_arm main.cpp)
 target_link_libraries(yandy_arm
