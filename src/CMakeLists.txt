@@ -50,6 +50,13 @@ target_link_libraries(yandy_arm_vision_system
         MvCameraControl
 )
 
+add_library(yandy_arm_fsm SHARED modules/FSM.cpp)
+
+target_link_libraries(yandy_arm_fsm
+        PUBLIC
+        yandy_arm_logger
+)
+
 
 add_executable(yandy_arm main.cpp)
 target_link_libraries(yandy_arm
@@ -57,5 +64,7 @@ target_link_libraries(yandy_arm
         yandy_arm_arm_hw
         yandy_arm_effector
         yandy_arm_solver
+        yandy_arm_vision_system
+        yandy_arm_fsm
         tomlplusplus::tomlplusplus
 )
