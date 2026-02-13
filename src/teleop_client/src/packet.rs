@@ -105,8 +105,8 @@ impl PacketSerializer {
 }
 
 mod crc8 {
-    const CRC8_INIT: u8 = 0xFF;
-    const CRC8_POLY: u8 = 0x31;
+    const CRC8_INIT: u8 = 0x00;
+    const CRC8_POLY: u8 = 0x07;
 
     pub fn calc(data: &[u8]) -> u8 {
         let mut crc = CRC8_INIT;
