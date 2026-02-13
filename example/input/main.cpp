@@ -23,7 +23,7 @@ int main()
     {
         provider.getLatestCommand(pack);
         printPack();
-        std::this_thread::sleep_for(10ms);
+        std::this_thread::sleep_for(100ms);
     }
 
     return 0;

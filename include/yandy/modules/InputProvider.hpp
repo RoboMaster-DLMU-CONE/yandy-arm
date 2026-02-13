@@ -6,11 +6,10 @@
 #include <yandy/core/Logger.hpp>
 #include <RPL/Deserializer.hpp>
 #include <RPL/Parser.hpp>
+#include <HySerial/HySerial.hpp>
 
 #include <boost/asio.hpp>
 #include <thread>
-#include <mutex>
-#include <optional>
 #include <array>
 
 namespace yandy::modules
@@ -62,6 +61,9 @@ namespace yandy::modules
         public:
             UsbProvider();
             bool getLatestCommand(YandyControlPack& packet) override;
+
+        private:
+            std::unique_ptr<HySerial::Serial> m_serial;
         };
     }
 
