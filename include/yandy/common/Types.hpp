@@ -4,6 +4,33 @@
 #include <eigen3/Eigen/Dense>
 #include <RPL/Meta/PacketTraits.hpp>
 
+enum class YandyControlCmd : uint8_t
+{
+    CMD_NONE = 0x00, // 心跳/无操作
+
+    // === 系统级指令 (System) ===
+    CMD_ERROR = 0x01, // 急停 (Emergency Stop) - 最高优先级
+    CMD_SWITCH_ENABLE = 0x02, // 启用/禁用输出 (Enable Toggle)
+    CMD_RESET = 0x03, // 复位 (Reset Error / Clear Accumulators)
+
+    // === 模式切换指令 (Mode Switching) ===
+    CMD_SWITCH_FETCH = 0x10, // 进入/退出 抓取模式 (Fetch Toggle)
+    CMD_SWITCH_STORE = 0x11, // 进入/退出 存取矿模式 (Store Toggle)
+
+    // === 手动操作指令 (Manual Action) ===
+    CMD_SWITCH_GRIP = 0x20, // 手动切换夹爪 (Gripper Toggle)
+
+    // === 调试/修正指令 (Debug / Override) ===
+    CMD_TOGGLE_HELD = 0x80, // 强制修改“持有矿石”状态
+    CMD_INC_STORE = 0x81, // 强制库存 +1
+    CMD_DEC_STORE = 0x82 // 强制库存 -1
+};
+
+inline auto format_as(YandyControlCmd c)
+{
+    return static_cast<uint8_t>(c);
+}
+
 struct __attribute__((packed)) YandyControlPack
 {
     float x; // m
@@ -12,6 +39,8 @@ struct __attribute__((packed)) YandyControlPack
     float roll; // rad
     float pitch; // rad
     float yaw; // rad
+
+    YandyControlCmd cmd;
 };
 
 template <>

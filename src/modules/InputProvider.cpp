@@ -13,12 +13,72 @@ namespace yandy::modules
         {
         }
 
-        UdpProvider::UdpProvider()
+        UdpProvider::UdpProvider() : m_socket(m_io_context), m_running(true)
         {
+            m_logger = core::create_logger("UdpInputProvider", spdlog::level::info);
+            m_logger->info("Constructing UdpProvider, loading config from {}", YANDY_INPUT_CONFIG);
+
+            auto tbl = toml::parse_file(YANDY_INPUT_CONFIG);
+            auto address = tbl["udp"]["address"].value<std::string>().value();
+            auto port = tbl["udp"]["port"].value<uint16_t>().value();
+
+            udp::endpoint endpoint(boost::asio::ip::make_address(address), port);
+            m_socket.open(endpoint.protocol());
+            m_socket.bind(endpoint);
+
+            m_logger->info("UdpProvider bound to {}:{}", address, port);
+
+            startReceiveThread();
+        }
+
+        void UdpProvider::startReceiveThread()
+        {
+            m_receive_thread = std::thread([this]()
+            {
+                doReceive();
+                m_io_context.run();
+            });
+        }
+
+        void UdpProvider::doReceive()
+        {
+            m_socket.async_receive_from(
+                boost::asio::buffer(m_recv_buffer),
+                m_remote_endpoint,
+                [this](const boost::system::error_code& error, std::size_t bytes_transferred)
+                {
+                    receiveHandler(error, bytes_transferred);
+                });
+        }
+
+        void UdpProvider::receiveHandler(const boost::system::error_code& error, std::size_t bytes_transferred)
+        {
+            if (!error && m_running)
+            {
+                m_logger->debug("Received UDP packet with {} bytes from {}:{}",
+                                bytes_transferred,
+                                m_remote_endpoint.address().to_string(),
+                                m_remote_endpoint.port());
+
+                (void)m_par.push_data(reinterpret_cast<const uint8_t*>(m_recv_buffer.data()), bytes_transferred);
+                // 将数据包写入缓冲区
+                m_packet_buffer.write(m_des.get<YandyControlPack>());
+
+                // 重新开始接收下一个数据包
+                doReceive();
+            }
+            else if (error != boost::asio::error::operation_aborted && m_running)
+            {
+                m_logger->error("UDP receive error: {}", error.message());
+
+                // 出错后继续尝试接收
+                doReceive();
+            }
         }
 
         bool UdpProvider::getLatestCommand(YandyControlPack& packet)
         {
+            packet = m_packet_buffer.read();
             return true;
         }
 
