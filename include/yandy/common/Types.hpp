@@ -2,6 +2,24 @@
 #define YANDY_ARM_TYPES_HPP
 
 #include <eigen3/Eigen/Dense>
+#include <RPL/Meta/PacketTraits.hpp>
+
+struct __attribute__((packed)) YandyControlPack
+{
+    float x; // m
+    float y; // m
+    float z; // m
+    float roll; // rad
+    float pitch; // rad
+    float yaw; // rad
+};
+
+template <>
+struct RPL::Meta::PacketTraits<YandyControlPack> : PacketTraitsBase<PacketTraits<YandyControlPack>>
+{
+    static constexpr uint16_t cmd = 0x0604;
+    static constexpr size_t size = sizeof(YandyControlPack);
+};
 
 namespace yandy::common
 {
@@ -27,10 +45,6 @@ namespace yandy::common
         Eigen::Vector<double, JOINT_NUM> kp{}; // 刚度
         Eigen::Vector<double, JOINT_NUM> kd{}; // 阻尼
         Eigen::Vector<double, JOINT_NUM> tau_ff{}; // 前馈力矩 (核心)
-    };
-
-    struct YandyPacket
-    {
     };
 }
 

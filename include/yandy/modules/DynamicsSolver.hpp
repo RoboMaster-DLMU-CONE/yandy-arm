@@ -5,6 +5,7 @@
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/multibody/data.hpp>
 #include <spdlog/spdlog.h>
+#include <optional>
 
 namespace yandy::modules
 {
