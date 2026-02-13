@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.33"
+kiss3d = "0.35"
+nalgebra = "0.30"
+urdf-rs = "0.8"
+stl_io = "0.6"
+bytemuck = { version = "1.14", features = ["derive"] }
