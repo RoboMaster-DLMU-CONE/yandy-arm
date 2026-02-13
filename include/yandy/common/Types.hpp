@@ -28,6 +28,10 @@ namespace yandy::common
         Eigen::Vector<double, JOINT_NUM> kd{}; // 阻尼
         Eigen::Vector<double, JOINT_NUM> tau_ff{}; // 前馈力矩 (核心)
     };
+
+    struct YandyPacket
+    {
+    };
 }
 
 #endif //YANDY_ARM_TYPES_HPP
