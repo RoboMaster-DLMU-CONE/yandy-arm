@@ -1,0 +1,5 @@
+#pragma once
+
+#define YANDY_ARM_PUML_CONTENT R"puml_delimiter(
+@PUML_CONTENT@
+)puml_delimiter"

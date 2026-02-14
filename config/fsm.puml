@@ -1,4 +1,4 @@
-@startuml RobotArm
+@startuml YandyArm
 skinparam linetype polyline
 
 ' === 变量说明 (注释) ===
@@ -19,8 +19,10 @@ state ErrorMode {
 state ManualControl {
     ' [NULL状态] 正常规划
 
-    ' === 内部修正指令 (Debug/Fix) ===
-    ' 这些指令不会打断当前的控制流，只修改变量
+    ' 手动模式下的内部指令 (不切换状态)
+    ' 包括复位累积值、手动开关夹爪、调试指令
+    ManualControl -> ManualControl : -CMD_RESET       / clear_accumulators
+    ManualControl -> ManualControl : -CMD_SWITCH_GRIP / toggle_gripper
     ManualControl -> ManualControl : -CMD_TOGGLE_HELD / toggle_held_flag
     ManualControl -> ManualControl : -CMD_INC_STORE   / inc_storage_count
     ManualControl -> ManualControl : -CMD_DEC_STORE   / dec_storage_count
@@ -48,7 +50,7 @@ state StorageMode {
 [*] --> ErrorMode : CMD_ERROR / emergency_stop
 
 ' 2. 复位错误
-ErrorMode -> ManualControl : CMD_RESET / clear_error_flags
+ErrorMode -> ManualControl : CMD_RESET / clear_error
 
 ' 3. 启用/禁用
 Disabled      -> ManualControl : CMD_SWITCH_ENABLE / enable_output
@@ -56,29 +58,26 @@ ManualControl -> Disabled      : CMD_SWITCH_ENABLE / disable_output
 
 ' 4. 抓取流程 (Switch Fetch)
 ' 进入：
-ManualControl -> FetchingMode  : CMD_SWITCH_FETCH / action_vision_approach
+ManualControl -> FetchingMode  : CMD_SWITCH_FETCH / enter_fetch
 
 ' 退出 (分支处理)：
 ' 分支A: 传感器确认抓取成功 -> 标记持有 -> 回原位
-FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [grip_success]  / action_grip_success
+FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [grip_success]  / fetch_success
 
 ' 分支B: 传感器显示没抓到 -> 仅回原位 (不标记持有) -> 打印警告
-FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [!grip_success] / action_grip_fail_log
+FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [!grip_success] / fetch_fail
 
 
 ' 5. 存取流程 (Switch Store) - 增加库存检查 Guard
 ' Case A: 有矿 且 仓库未满(count < 2) -> 去存
-ManualControl -> StorageMode   : CMD_SWITCH_STORE [has_mineral && can_deposit]  / action_move_to_deposit
+ManualControl -> StorageMode   : CMD_SWITCH_STORE [has_mineral && can_deposit]  / move_to_deposit
 
 ' Case B: 没矿 且 仓库不空(count > 0) -> 去取
-ManualControl -> StorageMode   : CMD_SWITCH_STORE [!has_mineral && can_retrieve] / action_move_to_retrieve
+ManualControl -> StorageMode   : CMD_SWITCH_STORE [!has_mineral && can_retrieve] / move_to_retrieve
 
 ' Case C: 完成并返回
 ' 这里的 Action 会自动根据是“存”还是“取”来更新 stored_count
-StorageMode   -> ManualControl : CMD_SWITCH_STORE / action_finish_store_procedure
+StorageMode   -> ManualControl : CMD_SWITCH_STORE / store_finish
 
-' 6. 手动模式下的复位和夹爪
-ManualControl -> ManualControl : -CMD_RESET       / action_clear_accumulators
-ManualControl -> ManualControl : -CMD_SWITCH_GRIP / action_toggle_gripper
 
 @enduml
