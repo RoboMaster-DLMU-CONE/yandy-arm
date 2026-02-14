@@ -1,0 +1,11 @@
+set(PUML_SOURCE "${PROJECT_SOURCE_DIR}/config/fsm.puml")
+set(TEMPLATE_FILE "${PROJECT_SOURCE_DIR}/src/modules/fsm_puml.h.in")
+set(GENERATED_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/fsm_puml.h")
+
+file(READ ${PUML_SOURCE} PUML_CONTENT)
+
+configure_file(${TEMPLATE_FILE} ${GENERATED_HEADER} @ONLY)
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PUML_SOURCE})

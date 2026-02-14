@@ -50,6 +50,8 @@ target_link_libraries(yandy_arm_vision_system
         MvCameraControl
 )
 
+
+include(GrepPumlFSM)
 add_library(yandy_arm_fsm SHARED modules/FSM.cpp)
 
 target_link_libraries(yandy_arm_fsm
