@@ -51,8 +51,8 @@ target_link_libraries(yandy_arm_vision_system
 )
 
 
-include(GrepPumlFSM)
 add_library(yandy_arm_fsm SHARED modules/FSM.cpp)
+include(GrepPumlFSM)
 
 target_link_libraries(yandy_arm_fsm
         PUBLIC
