@@ -6,3 +6,4 @@ port = 11451
 
 [usb]
 device = "/dev/ttyACM0"
+baud_rate = 115200

@@ -13,16 +13,14 @@ int main()
     yandy::core::init_logging();
     auto logger = yandy::core::get_default_logger();
     yandy::modules::InputProvider provider;
-    YandyControlPack pack{};
-    const auto printPack = [logger, &pack]
+    const auto printPack = [logger](const YandyControlPack& pack)
     {
         const auto [x,y,z,roll,pitch,yaw, s] = pack;
         logger->info("Received: {}, {}, {}, {}, {}, {}, {}", x, y, z, roll, pitch, yaw, s);
     };
     while (running.load(std::memory_order_acquire))
     {
-        provider.getLatestCommand(pack);
-        printPack();
+        printPack(provider.getLatestCommand());
         std::this_thread::sleep_for(100ms);
     }
 

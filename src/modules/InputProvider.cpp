@@ -75,10 +75,9 @@ namespace yandy::modules
             }
         }
 
-        bool UdpProvider::getLatestCommand(YandyControlPack& packet)
+        YandyControlPack UdpProvider::getLatestCommand()
         {
-            packet = m_packet_buffer.read();
-            return true;
+            return m_packet_buffer.read();
         }
 
         UsbProvider::UsbProvider()
@@ -88,11 +87,52 @@ namespace yandy::modules
 
             auto tbl = toml::parse_file(YANDY_INPUT_CONFIG);
             auto device = tbl["usb"]["device"].value<std::string>().value();
+            auto baud_rate = tbl["usb"]["baud_rate"].value<uint32_t>().value();
+
+            HySerial::Builder builder;
+            builder.device(device)
+                   .baud_rate(baud_rate)
+                   .data_bits(HySerial::DataBits::BITS_8)
+                   .parity(HySerial::Parity::NONE)
+                   .stop_bits(HySerial::StopBits::ONE);
+
+            builder.on_read([this](const std::span<const std::byte> data) { on_serial_read(data); });
+            builder.on_error([this](const ssize_t e) { on_serial_error(e); });
+
+            auto serial_or_err = builder.build();
+            if (!serial_or_err)
+            {
+                m_logger->error("Failed to create Serial: {}", serial_or_err.error().message);
+                throw std::runtime_error("Failed to create Usb Serial port");
+            }
+            m_serial = std::move(serial_or_err.value());
+            m_serial->start_read();
         }
 
-        bool UsbProvider::getLatestCommand(YandyControlPack& packet)
+        UsbProvider::~UsbProvider()
         {
-            return true;
+            if (m_serial)
+            {
+                m_serial->stop_read();
+            }
+        }
+
+        YandyControlPack UsbProvider::getLatestCommand()
+        {
+            return m_buf.read();
+        }
+
+        void UsbProvider::on_serial_read(std::span<const std::byte> data)
+        {
+            const auto size = data.size();
+            const auto u8_data = reinterpret_cast<const uint8_t*>(data.data());
+            (void)m_par.push_data(u8_data, size);
+            m_buf.write(m_des.get<YandyControlPack>());
+        }
+
+        void UsbProvider::on_serial_error(const ssize_t e) const
+        {
+            m_logger->error("{}", strerror(static_cast<int>(e)));
         }
     }
 
@@ -119,8 +159,8 @@ namespace yandy::modules
         }
     }
 
-    bool InputProvider::getLatestCommand(YandyControlPack& packet) const
+    YandyControlPack InputProvider::getLatestCommand() const
     {
-        return m_provider->getLatestCommand(packet);
+        return m_provider->getLatestCommand();
     }
 }
