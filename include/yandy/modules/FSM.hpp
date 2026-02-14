@@ -1,9 +1,9 @@
 #ifndef YANDY_ARM_FSM_HPP
 #define YANDY_ARM_FSM_HPP
 
-#include <boost/msm/back/state_machine.hpp>
 #include <boost/msm/front/state_machine_def.hpp>
 #include <boost/msm/front/puml/puml.hpp>
+#include <boost/msm/backmp11/state_machine.hpp>
 
 #include <yandy/core/Logger.hpp>
 #include <fsm_puml.h>
@@ -282,41 +282,13 @@ namespace yandy::modules
 {
     namespace msm = boost::msm;
 
-    struct EvMove
-    {
-        std::array<float, 6> pos_arr{};
-
-        EvMove(const std::array<float, 6>& pos_array) : pos_arr(pos_array)
-        {
-        };
-    };
-
-    struct EvSwitchEnable
-    {
-    };
-
-    struct EvReset
-    {
-    };
-
-    struct EvFetch
-    {
-    };
-
-    struct EvSwitchStore
-    {
-    };
-
-    struct EvSwitchGrip
-    {
-    };
-
     namespace detail
     {
         using namespace msm::front::puml;
 
         class YandyArmFSMDef : public msm::front::state_machine_def<YandyArmFSMDef>
         {
+        public:
             YandyArmFSMDef()
             {
                 m_logger = core::create_logger("YandyArmFSM", spdlog::level::info);
@@ -330,13 +302,15 @@ namespace yandy::modules
                 m_logger->warn("当前状态不支持此指令");
             }
 
+            std::shared_ptr<spdlog::logger> m_logger;
+
+        private:
             bool mineral_attached = false;
             int stored_count = 0;
-            std::shared_ptr<spdlog::logger> m_logger;
         };
     }
 
-    typedef msm::back::state_machine<detail::YandyArmFSMDef> YandyArmFSM;
+    typedef msm::backmp11::state_machine<detail::YandyArmFSMDef> YandyArmFSM;
 }
 
 #endif //YANDY_ARM_FSM_HPP

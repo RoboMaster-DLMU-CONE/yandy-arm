@@ -1,83 +1,106 @@
 @startuml YandyArm
-skinparam linetype polyline
+
+skinparam state {
+    BackgroundColor WhiteSmoke
+    BorderColor DarkSlateGray
+    FontSize 15
+    FontColor Black
+    Padding 12
+    Margin 10
+    BorderThickness 2
+    RoundCorner 12
+}
+
+skinparam stateArrow {
+    FontSize 12
+    FontColor DarkBlue
+}
 
 ' === 变量说明 (注释) ===
 ' bool has_mineral: 当前末端是否有矿
 ' int stored_count: 仓库里有几个矿 (0, 1, 2)
 ' bool grip_sensor: 夹爪传感器状态
 
-[*] -> Disabled
+state YandyArm {
 
-state Disabled {
+    ' === 顶层初始状态 ===
+    ' 系统启动默认进入运作模式（的初始状态 Disabled）
+    [*] -> Operational
+
+    ' ==============================================
+    ' 正常运作模式
+    ' ==============================================
+    state Operational {
+
+        ' 运作模式下的默认状态是禁用
+        [*] -> Disabled
+
+        state Disabled {
+        }
+
+        state ManualControl {
+            ' [NULL状态] 正常规划
+
+            ' --- 内部指令 ---
+            ' 仅在 ManualControl 状态下有效，不触发状态切换
+            ManualControl -> ManualControl : -CMD_RESET         / clear_accumulators
+            ManualControl -> ManualControl : -CMD_SWITCH_GRIP   / toggle_gripper
+            ManualControl -> ManualControl : -CMD_TOGGLE_HELD   / toggle_held_flag
+            ManualControl -> ManualControl : -CMD_INC_STORE     / inc_storage_count
+            ManualControl -> ManualControl : -CMD_DEC_STORE     / dec_storage_count
+
+            ' --- 逻辑检查 ---
+            ' 冲突报错
+            ManualControl --> ManualControl : -CMD_SWITCH_STORE [store_logic_conflict] / log_store_conflict
+        }
+
+        state FetchingMode {
+            ' [FETCH状态]
+        }
+
+        state StorageMode {
+            ' [STORE状态]
+        }
+
+        ' --- 子状态间的转换逻辑 ---
+
+        ' A. 启用/禁用
+        Disabled      ---> ManualControl : CMD_SWITCH_ENABLE / enable_output
+        ManualControl ---> Disabled      : CMD_SWITCH_ENABLE / disable_output
+
+        ' B. 抓取流程 (Switch Fetch)
+        ' 进入
+        ManualControl --> FetchingMode  : CMD_SWITCH_FETCH / enter_fetch
+
+        ' 退出 - 成功
+        FetchingMode  --> ManualControl : CMD_SWITCH_FETCH [grip_success]  / fetch_success
+        ' 退出 - 失败
+        FetchingMode  --> ManualControl : CMD_SWITCH_FETCH [!grip_success] / fetch_fail
+
+        ' C. 存取流程 (Switch Store)
+        ' Case A: 去存
+        ManualControl --> StorageMode   : CMD_SWITCH_STORE [has_mineral && can_deposit]   / move_to_deposit
+        ' Case B: 去取
+        ManualControl --> StorageMode   : CMD_SWITCH_STORE [!has_mineral && can_retrieve] / move_to_retrieve
+        ' Case C: 完成并返回
+        StorageMode   --> ManualControl : CMD_SWITCH_STORE / store_finish
+    }
+
+    ' ==============================================
+    ' 故障模式
+    ' ==============================================
+    state ErrorMode {
+        ' 故障状态，禁止动作
+        ' 等待 CMD_RESET
+    }
+
+    ' ==============================================
+    ' 全局转换
+    ' ==============================================
+    Operational --> ErrorMode : CMD_ERROR / emergency_stop
+
+    ' 复位错误：回到 Operational (进入 Operational 的初始状态 Disabled)
+    ErrorMode   --> Operational : CMD_RESET / clear_error
+
 }
-
-state ErrorMode {
-    ' 故障状态，禁止动作
-    ' 需要 CMD_RESET 才能清除
-}
-
-state ManualControl {
-    ' [NULL状态] 正常规划
-
-    ' 手动模式下的内部指令 (不切换状态)
-    ' 包括复位累积值、手动开关夹爪、调试指令
-    ManualControl -> ManualControl : -CMD_RESET       / clear_accumulators
-    ManualControl -> ManualControl : -CMD_SWITCH_GRIP / toggle_gripper
-    ManualControl -> ManualControl : -CMD_TOGGLE_HELD / toggle_held_flag
-    ManualControl -> ManualControl : -CMD_INC_STORE   / inc_storage_count
-    ManualControl -> ManualControl : -CMD_DEC_STORE   / dec_storage_count
-
-    ' === 内部逻辑检查 ===
-    ' 如果产生逻辑冲突（比如满载还要存），执行内部转换报错，不切换状态
-    ManualControl -> ManualControl : -CMD_SWITCH_STORE [store_logic_conflict] / log_store_conflict
-}
-
-state FetchingMode {
-    ' [FETCH状态]
-    ' Entry: 视觉定位 -> 移动 -> 开爪
-    ' Exit:  关爪
-}
-
-state StorageMode {
-    ' [STORE状态]
-    ' Entry: 移动到存/取点
-    ' Exit:  执行存/取动作 -> 回位 -> 更新计数
-}
-
-' === 转换逻辑 ===
-
-' 1. 全局错误处理 (任何状态收到 ERROR 都跳到 ErrorMode)
-[*] --> ErrorMode : CMD_ERROR / emergency_stop
-
-' 2. 复位错误
-ErrorMode -> ManualControl : CMD_RESET / clear_error
-
-' 3. 启用/禁用
-Disabled      -> ManualControl : CMD_SWITCH_ENABLE / enable_output
-ManualControl -> Disabled      : CMD_SWITCH_ENABLE / disable_output
-
-' 4. 抓取流程 (Switch Fetch)
-' 进入：
-ManualControl -> FetchingMode  : CMD_SWITCH_FETCH / enter_fetch
-
-' 退出 (分支处理)：
-' 分支A: 传感器确认抓取成功 -> 标记持有 -> 回原位
-FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [grip_success]  / fetch_success
-
-' 分支B: 传感器显示没抓到 -> 仅回原位 (不标记持有) -> 打印警告
-FetchingMode  -> ManualControl : CMD_SWITCH_FETCH [!grip_success] / fetch_fail
-
-
-' 5. 存取流程 (Switch Store) - 增加库存检查 Guard
-' Case A: 有矿 且 仓库未满(count < 2) -> 去存
-ManualControl -> StorageMode   : CMD_SWITCH_STORE [has_mineral && can_deposit]  / move_to_deposit
-
-' Case B: 没矿 且 仓库不空(count > 0) -> 去取
-ManualControl -> StorageMode   : CMD_SWITCH_STORE [!has_mineral && can_retrieve] / move_to_retrieve
-
-' Case C: 完成并返回
-' 这里的 Action 会自动根据是“存”还是“取”来更新 stored_count
-StorageMode   -> ManualControl : CMD_SWITCH_STORE / store_finish
-
-
 @enduml

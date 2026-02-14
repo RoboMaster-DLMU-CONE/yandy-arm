@@ -6,6 +6,6 @@ file(READ ${PUML_SOURCE} PUML_CONTENT)
 
 configure_file(${TEMPLATE_FILE} ${GENERATED_HEADER} @ONLY)
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(yandy_arm_fsm PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PUML_SOURCE})
