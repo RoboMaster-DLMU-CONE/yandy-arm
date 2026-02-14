@@ -27,7 +27,7 @@ namespace yandy::modules
             {
             };
 
-            virtual bool getLatestCommand(YandyControlPack& packet) = 0;
+            virtual YandyControlPack getLatestCommand() = 0;
 
         protected:
             RPL::Deserializer<YandyControlPack> m_des;
@@ -39,7 +39,7 @@ namespace yandy::modules
         {
         public:
             UdpProvider();
-            bool getLatestCommand(YandyControlPack& packet) override;
+            YandyControlPack getLatestCommand() override;
 
         private:
             void startReceiveThread();
@@ -60,10 +60,14 @@ namespace yandy::modules
         {
         public:
             UsbProvider();
-            bool getLatestCommand(YandyControlPack& packet) override;
+            ~UsbProvider() override;
+            YandyControlPack getLatestCommand() override;
 
         private:
+            void on_serial_read(std::span<const std::byte> data);
+            void on_serial_error(ssize_t e) const;
             std::unique_ptr<HySerial::Serial> m_serial;
+            NBuf<YandyControlPack, 10> m_buf;
         };
     }
 
@@ -71,7 +75,7 @@ namespace yandy::modules
     {
     public:
         InputProvider();
-        bool getLatestCommand(YandyControlPack& packet) const;
+        [[nodiscard]] YandyControlPack getLatestCommand() const;
 
     private:
         std::unique_ptr<detail::IInputProvider> m_provider;
