@@ -3,7 +3,7 @@
 
 #include <boost/msm/front/state_machine_def.hpp>
 #include <boost/msm/front/puml/puml.hpp>
-#include <boost/msm/backmp11/state_machine.hpp>
+#include <boost/msm/back11/state_machine.hpp>
 
 #include <yandy/core/Logger.hpp>
 #include <fsm_puml.h>
@@ -310,7 +310,7 @@ namespace yandy::modules
         };
     }
 
-    typedef msm::backmp11::state_machine<detail::YandyArmFSMDef> YandyArmFSM;
+    typedef msm::back11::state_machine<detail::YandyArmFSMDef> YandyArmFSM;
 }
 
 #endif //YANDY_ARM_FSM_HPP

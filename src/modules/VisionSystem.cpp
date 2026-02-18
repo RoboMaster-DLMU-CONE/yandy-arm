@@ -397,7 +397,6 @@ namespace yandy::module
                 cv::line(img, cv::Point(pts[idx1].x, pts[idx1].y),
                          cv::Point(pts[idx2].x, pts[idx2].y), color, 2);
             };
-
             // --- 上横线 (Left -> Center -> Right) ---
             draw_line(i_top_left, i_top_center, cv::Scalar(0, 255, 0)); // Green
             draw_line(i_top_center, i_top_right, cv::Scalar(0, 255, 0)); // Green

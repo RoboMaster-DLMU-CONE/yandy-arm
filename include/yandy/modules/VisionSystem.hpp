@@ -5,7 +5,6 @@
 #include <openvino/openvino.hpp>
 #include "MvCameraControl.h"
 #include <vector>
-#include <iostream>
 #include <spdlog/logger.h>
 #include <eigen3/Eigen/Eigen>
 
