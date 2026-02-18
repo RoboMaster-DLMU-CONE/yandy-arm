@@ -1,3 +1,5 @@
+simulate = true
+
 [joint_1]
 can_id = 0x01
 master_id = 0x11

@@ -46,7 +46,7 @@ target_link_libraries(yandy_arm_vision_system
         yandy_arm_types
         yandy_arm_logger
         ${OpenCV_LIBS}
-        openvino
+        openvino::runtime
         MvCameraControl
 )
 
