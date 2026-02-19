@@ -7,6 +7,9 @@
 
 #include <yandy/core/Logger.hpp>
 #include <fsm_puml.h>
+#include <iostream>
+
+#include "yandy/common/Types.hpp"
 
 namespace boost::msm::front::puml
 {
@@ -71,7 +74,7 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             // fsm.hardware_grip(false); // 闭合
-            fsm.has_mineral = true;
+            fsm.mineral_attached = true;
             // fsm.hardware_move("FETCH_READY_POS");
             fsm.m_logger->info("抓取成功！已返回原位");
         }
@@ -84,7 +87,7 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             // fsm.hardware_grip(false); // 闭合
-            fsm.has_mineral = false;
+            fsm.mineral_attached = false;
             // fsm.hardware_move("FETCH_READY_POS");
             fsm.m_logger->warn("传感器未检测到物体！抓取失败，已返回。");
         }
@@ -123,12 +126,12 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            // 根据进入状态前的 has_mineral 判断是存还是取
-            if (fsm.has_mineral)
+            // 根据进入状态前的 mineral_attached 判断是存还是取
+            if (fsm.mineral_attached)
             {
                 // 存矿动作
                 // fsm.hardware_grip(true); // 张开扔掉
-                fsm.has_mineral = false;
+                fsm.mineral_attached = false;
                 ++fsm.stored_count;
                 fsm.m_logger->info("存矿完成");
             }
@@ -136,7 +139,7 @@ namespace boost::msm::front::puml
             {
                 // 取矿动作
                 // fsm.hardware_grip(false); // 闭合抓取
-                fsm.has_mineral = true;
+                fsm.mineral_attached = true;
                 --fsm.stored_count;
                 fsm.m_logger->info("取矿完成");
             }
@@ -185,8 +188,8 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            fsm.has_mineral = !fsm.has_mineral;
-            fsm.m_logger->info("强制切换持有状态为 {}", fsm.has_mineral);
+            fsm.mineral_attached = !fsm.mineral_attached;
+            fsm.m_logger->info("强制切换持有状态为 {}", fsm.mineral_attached);
         }
     };
 
@@ -225,7 +228,7 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         bool operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            return fsm.has_mineral;
+            return fsm.mineral_attached;
         }
     };
 
@@ -265,15 +268,36 @@ namespace boost::msm::front::puml
 
     // 检查逻辑冲突
     template <>
-    struct Guard<by_name("store_conflict")>
+    struct Guard<by_name("store_logic_conflict")>
     {
         template <class EVT, class FSM, class S, class T>
         bool operator()(EVT const&, FSM& fsm, S&, T&)
         {
             // 冲突定义：(有矿 但 满了) 或 (没矿 但 空了)
-            if (fsm.has_mineral && fsm.stored_count >= 2) return true;
-            if (!fsm.has_mineral && fsm.stored_count <= 0) return true;
+            if (fsm.mineral_attached && fsm.stored_count >= 2) return true;
+            if (!fsm.mineral_attached && fsm.stored_count <= 0) return true;
             return false;
+        }
+    };
+
+    // Fallback for combined guards if parser doesn't split them
+    template <>
+    struct Guard<by_name("has_mineral && can_deposit")>
+    {
+        template <class EVT, class FSM, class S, class T>
+        bool operator()(EVT const&, FSM& fsm, S&, T&)
+        {
+            return fsm.mineral_attached && (fsm.stored_count < 2);
+        }
+    };
+
+    template <>
+    struct Guard<by_name("!has_mineral && can_retrieve")>
+    {
+        template <class EVT, class FSM, class S, class T>
+        bool operator()(EVT const&, FSM& fsm, S&, T&)
+        {
+            return !fsm.mineral_attached && (fsm.stored_count > 0);
         }
     };
 }
@@ -303,14 +327,27 @@ namespace yandy::modules
             }
 
             std::shared_ptr<spdlog::logger> m_logger;
-
-        private:
             bool mineral_attached = false;
             int stored_count = 0;
         };
+
+        typedef msm::back11::state_machine<YandyArmFSMDef> YandyArmFSMBackend;
     }
 
-    typedef msm::back11::state_machine<detail::YandyArmFSMDef> YandyArmFSM;
+    class YandyArmFSM
+    {
+    public:
+        YandyArmFSM();
+        void processCmd(YandyControlCmd cmd);
+        void logState() const;
+        YandyState getState() const;
+
+    private:
+        detail::YandyArmFSMBackend m_fsm;
+        std::shared_ptr<spdlog::logger> m_logger;
+        void sync_state();
+        std::atomic<YandyState> m_current_state{YandyState::Disabled};
+    };
 }
 
 #endif //YANDY_ARM_FSM_HPP
