@@ -13,6 +13,40 @@ namespace yandy::modules
         {
         }
 
+        void IInputProvider::setCommandCb(const std::function<void(YandyControlCmd)>& func)
+        {
+            m_func = func;
+        }
+
+        YandyControlPack IInputProvider::getLatestCommand()
+        {
+            return m_buf.read();
+        }
+
+        void IInputProvider::update_cmd(const YandyControlCmd cmd)
+        {
+            if (cmd == m_candidate_cmd)
+            {
+                if (m_stability_count < m_filter_threshold)
+                {
+                    ++m_stability_count;
+                }
+            }
+            else
+            {
+                m_candidate_cmd = cmd;
+                m_stability_count = 1;
+            }
+            if (m_stability_count >= m_filter_threshold)
+            {
+                if (m_candidate_cmd != m_current_stable_cmd)
+                {
+                    m_current_stable_cmd = m_candidate_cmd;
+                    m_func(m_current_stable_cmd);
+                }
+            }
+        }
+
         UdpProvider::UdpProvider() : m_socket(m_io_context), m_running(true)
         {
             m_logger = core::create_logger("UdpInputProvider", spdlog::level::info);
@@ -60,7 +94,9 @@ namespace yandy::modules
                 auto result = m_par.push_data(data_ptr, bytes_transferred);
                 if (result)
                 {
-                    m_packet_buffer.write(m_des.get<YandyControlPack>());
+                    const auto packet = m_des.get<YandyControlPack>();
+                    update_cmd(packet.cmd);
+                    m_buf.write(packet);
                 }
 
                 // 重新开始接收下一个数据包
@@ -73,11 +109,6 @@ namespace yandy::modules
                 // 出错后继续尝试接收
                 doReceive();
             }
-        }
-
-        YandyControlPack UdpProvider::getLatestCommand()
-        {
-            return m_packet_buffer.read();
         }
 
         UsbProvider::UsbProvider()
@@ -117,17 +148,11 @@ namespace yandy::modules
             }
         }
 
-        YandyControlPack UsbProvider::getLatestCommand()
-        {
-            return m_buf.read();
-        }
-
         void UsbProvider::on_serial_read(std::span<const std::byte> data)
         {
             const auto size = data.size();
             const auto u8_data = reinterpret_cast<const uint8_t*>(data.data());
             (void)m_par.push_data(u8_data, size);
-            m_buf.write(m_des.get<YandyControlPack>());
         }
 
         void UsbProvider::on_serial_error(const ssize_t e) const
@@ -157,6 +182,11 @@ namespace yandy::modules
             temp_logger->error("Invalid type: {}, please use 'udp' or 'usb'", type);
             throw std::runtime_error("invalid type");
         }
+    }
+
+    void InputProvider::setCommandCb(const std::function<void(YandyControlCmd)>& func) const
+    {
+        m_provider->setCommandCb(func);
     }
 
     YandyControlPack InputProvider::getLatestCommand() const
