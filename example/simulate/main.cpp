@@ -264,7 +264,7 @@ int main(int argc, char** argv)
 
     // 解算出来的值作为输入系统的起始值
     input.target_pos = init_pose.translation();
-    input.target_rpy = init_pose.rotation().eulerAngles(0, 1, 2);
+    input.target_rpy = init_pose.rotation().eulerAngles(0, 0, 0);
 
     JointState current_state;
     JointCommand cmd;

@@ -76,17 +76,17 @@ using namespace std::chrono_literals;
 int main()
 {
     yandy::core::init_logging();
-    yandy::module::HikDriver camera;
+    yandy::modules::HikDriver camera;
     if (!camera.init()) return -1;
 
-    yandy::module::EnergyDetector detector;
+    yandy::modules::EnergyDetector detector;
     if (!detector.init()) return -1;
 
     cv::Mat vis_3d_canvas; // 用于可视化的画布
     cv::Mat combined_display; // 最终合并的图
     cv::Mat frame;
 
-    yandy::module::EnergyPoseSolver solver;
+    yandy::modules::EnergyPoseSolver solver;
 
     auto K = solver.get_camera_matrix();
     auto D = solver.get_dist_coeffs();
