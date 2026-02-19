@@ -7,6 +7,8 @@ namespace yandy::modules
     {
     public:
         Effector();
+        void closeClaw();
+        void openClaw();
 
     private:
     };
