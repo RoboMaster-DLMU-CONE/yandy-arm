@@ -8,7 +8,7 @@
 #include <spdlog/logger.h>
 #include <eigen3/Eigen/Eigen>
 
-namespace yandy::module
+namespace yandy::modules
 {
     struct EnergyUnit
     {

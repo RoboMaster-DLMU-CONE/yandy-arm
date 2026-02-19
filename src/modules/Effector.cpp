@@ -2,7 +2,7 @@
 
 namespace yandy::modules
 {
-    class Effector
+    Effector::Effector()
     {
-    };
+    }
 }

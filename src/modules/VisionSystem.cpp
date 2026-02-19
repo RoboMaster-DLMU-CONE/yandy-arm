@@ -5,7 +5,7 @@
 #define YANDY_MODEL_PATH YANDY_CONFIG_PATH "yolo/best.onnx"
 #define YANDY_VISION_CONFIG YANDY_CONFIG_PATH "vision.toml"
 
-namespace yandy::module
+namespace yandy::modules
 {
     EnergyPoseSolver::EnergyPoseSolver(std::optional<cv::Mat> camera_matrix, std::optional<cv::Mat> dist_coeffs)
     {

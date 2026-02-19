@@ -56,10 +56,10 @@ int main(int argc, char** argv)
 
     yandy::core::init_logging();
 
-    yandy::module::EnergyDetector detector;
+    yandy::modules::EnergyDetector detector;
     if (!detector.init()) return -1;
 
-    yandy::module::EnergyPoseSolver solver;
+    yandy::modules::EnergyPoseSolver solver;
     auto K = solver.get_camera_matrix();
     auto D = solver.get_dist_coeffs();
 
