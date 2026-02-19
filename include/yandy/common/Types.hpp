@@ -27,7 +27,31 @@ enum class YandyControlCmd : uint8_t
     CMD_DEC_STORE = 0x82 // 强制库存 -1
 };
 
-inline std::string_view format_as(YandyControlCmd c)
+enum class YandyState : uint8_t
+{
+    Unknown,
+    Disabled,
+    Manual,
+    Fetching,
+    Store,
+    Error
+};
+
+constexpr std::string_view format_as(const YandyState s)
+{
+    switch (s)
+    {
+    case YandyState::Unknown: return "Unknown";
+    case YandyState::Disabled: return "Disabled";
+    case YandyState::Manual: return "Manual";
+    case YandyState::Fetching: return "Fetching";
+    case YandyState::Store: return "Store";
+    case YandyState::Error: return "Error";
+    default: return "Unknown";
+    }
+}
+
+constexpr std::string_view format_as(const YandyControlCmd c)
 {
     switch (c)
     {

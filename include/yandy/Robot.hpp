@@ -6,11 +6,15 @@
 #include <yandy/modules/DynamicsSolver.hpp>
 #include <yandy/modules/Effector.hpp>
 #include <yandy/modules/FSM.hpp>
+#include <yandy/common/NBuf.hpp>
 
 namespace yandy
 {
     namespace detail
     {
+        struct
+        {
+        };
     }
 
     class Robot
