@@ -139,7 +139,7 @@ fn main() {
         .connect("127.0.0.1:11451")
         .expect("Failed to connect UDP");
     socket.set_nonblocking(true).ok();
-    
+
     let mut serializer = packet::PacketSerializer::new();
 
     let mut last_frame = Instant::now();
@@ -193,12 +193,19 @@ fn main() {
                 }
                 WindowEvent::Key(key, action, _) => {
                     if action == Action::Press {
+                        let is_ctrl = window.get_key(Key::LControl) == Action::Press
+                            || window.get_key(Key::RControl) == Action::Press;
                         match key {
-                            Key::R => cmd_state = YandyControlCmd::Reset,
+                            Key::F if is_ctrl => cmd_state = YandyControlCmd::ToggleHeld,
+                            Key::E if is_ctrl => cmd_state = YandyControlCmd::IncStore,
+                            Key::Q if is_ctrl => cmd_state = YandyControlCmd::DecStore,
+
                             Key::F => cmd_state = YandyControlCmd::SwitchFetch,
-                            Key::G => cmd_state = YandyControlCmd::SwitchGrip,
-                            Key::O => cmd_state = YandyControlCmd::SwitchEnable,
-                            Key::P => cmd_state = YandyControlCmd::SwitchStore,
+                            Key::R => cmd_state = YandyControlCmd::SwitchStore,
+                            Key::G => cmd_state = YandyControlCmd::SwitchEnable,
+                            Key::C => cmd_state = YandyControlCmd::SwitchGrip,
+                            Key::Z => cmd_state = YandyControlCmd::Reset,
+                            Key::B => cmd_state = YandyControlCmd::Error,
                             _ => {}
                         }
                     } else if action == Action::Release {
