@@ -18,6 +18,10 @@ int main()
         const auto [x,y,z,roll,pitch,yaw, s] = pack;
         logger->info("Received: {}, {}, {}, {}, {}, {}, {}", x, y, z, roll, pitch, yaw, s);
     };
+    provider.setCommandCb([logger](YandyControlCmd cmd)
+    {
+        logger->info("State change to : {}", cmd);
+    });
     while (running.load(std::memory_order_acquire))
     {
         printPack(provider.getLatestCommand());
