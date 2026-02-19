@@ -8,19 +8,19 @@ enum class YandyControlCmd : uint8_t
 {
     CMD_NONE = 0x00, // 心跳/无操作
 
-    // === 系统级指令 (System) ===
+    // === 系统级指令 ===
     CMD_ERROR = 0x01, // 急停 (Emergency Stop) - 最高优先级
     CMD_SWITCH_ENABLE = 0x02, // 启用/禁用输出 (Enable Toggle)
     CMD_RESET = 0x03, // 复位 (Reset Error / Clear Accumulators)
 
-    // === 模式切换指令 (Mode Switching) ===
+    // === 模式切换指令 ===
     CMD_SWITCH_FETCH = 0x10, // 进入/退出 抓取模式 (Fetch Toggle)
     CMD_SWITCH_STORE = 0x11, // 进入/退出 存取矿模式 (Store Toggle)
 
-    // === 手动操作指令 (Manual Action) ===
+    // === 手动操作指令 ===
     CMD_SWITCH_GRIP = 0x20, // 手动切换夹爪 (Gripper Toggle)
 
-    // === 调试/修正指令 (Debug / Override) ===
+    // === 调试/修正指令 ===
     CMD_TOGGLE_HELD = 0x80, // 强制修改“持有矿石”状态
     CMD_INC_STORE = 0x81, // 强制库存 +1
     CMD_DEC_STORE = 0x82 // 强制库存 -1

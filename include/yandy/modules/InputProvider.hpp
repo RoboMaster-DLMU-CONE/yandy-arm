@@ -23,36 +23,44 @@ namespace yandy::modules
         public:
             IInputProvider();
 
-            virtual ~IInputProvider()
-            {
-            };
+            virtual ~IInputProvider() = default;
+            void setCommandCb(const std::function<void(YandyControlCmd)>& func);
 
-            virtual YandyControlPack getLatestCommand() = 0;
+            YandyControlPack getLatestCommand();
 
         protected:
+            void update_cmd(const YandyControlCmd cmd);
+
+            int m_filter_threshold{};
+            int m_stability_count{};
+            YandyControlCmd m_candidate_cmd = YandyControlCmd::CMD_NONE; // 正在观测的命令
+            YandyControlCmd m_current_stable_cmd = YandyControlCmd::CMD_NONE; // 当前生效的命令
+
             RPL::Deserializer<YandyControlPack> m_des;
             RPL::Parser<YandyControlPack> m_par;
             std::shared_ptr<spdlog::logger> m_logger;
+            NBuf<YandyControlPack, 10> m_buf; // 使用N重缓冲区，大小为10
+            std::function<void(YandyControlCmd)> m_func = [](YandyControlCmd)
+            {
+            };
         };
 
         class UdpProvider : public IInputProvider
         {
         public:
             UdpProvider();
-            YandyControlPack getLatestCommand() override;
 
         private:
             void startReceiveThread();
             void receiveHandler(const boost::system::error_code& error, std::size_t bytes_transferred);
             void doReceive();
 
-        private:
             boost::asio::io_context m_io_context;
             udp::socket m_socket;
             udp::endpoint m_remote_endpoint;
-            std::array<char, 1024> m_recv_buffer;
+            std::array<char, 1024> m_recv_buffer{};
             std::thread m_receive_thread;
-            NBuf<YandyControlPack, 10> m_packet_buffer; // 使用N重缓冲区，大小为10
+
             bool m_running;
         };
 
@@ -61,7 +69,6 @@ namespace yandy::modules
         public:
             UsbProvider();
             ~UsbProvider() override;
-            YandyControlPack getLatestCommand() override;
 
         private:
             void on_serial_read(std::span<const std::byte> data);
@@ -75,6 +82,7 @@ namespace yandy::modules
     {
     public:
         InputProvider();
+        void setCommandCb(const std::function<void(YandyControlCmd)>& func) const;
         [[nodiscard]] YandyControlPack getLatestCommand() const;
 
     private:
