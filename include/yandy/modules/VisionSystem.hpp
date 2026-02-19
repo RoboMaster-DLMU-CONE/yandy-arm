@@ -5,6 +5,7 @@
 #include <openvino/openvino.hpp>
 #include "MvCameraControl.h"
 #include <vector>
+#include <mutex>
 #include <spdlog/logger.h>
 #include <eigen3/Eigen/Eigen>
 
@@ -55,16 +56,23 @@ namespace yandy::modules
         ~HikDriver();
 
         bool init();
-        bool getFrame(cv::Mat& frame) const;
+        bool getLatestFrame(cv::Mat& frame);
         void close();
 
     private:
+        static void __stdcall imageCallback(unsigned char* pData, MV_FRAME_OUT_INFO_EX* pFrameInfo, void* pUser);
+        void onFrame(unsigned char* pData, MV_FRAME_OUT_INFO_EX* pFrameInfo);
+
         void* handle_ = nullptr;
-        unsigned char* pData_ = nullptr; // 原始数据缓存
-        unsigned char* pDataForRGB_ = nullptr; // RGB转换缓存
+        unsigned char* pDataForRGB_ = nullptr; // RGB转换缓存 (回调线程专用)
         MV_CC_DEVICE_INFO_LIST stDeviceList_{};
         bool is_open_ = false;
         int payload_size_ = 0;
+
+        mutable std::mutex m_frame_mutex;
+        cv::Mat m_latest_frame;
+        bool m_frame_ready{false};
+
         std::shared_ptr<spdlog::logger> m_logger;
     };
 

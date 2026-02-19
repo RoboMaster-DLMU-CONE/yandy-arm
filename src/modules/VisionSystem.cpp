@@ -127,6 +127,37 @@ namespace yandy::modules
 
     HikDriver::~HikDriver()
     {
+        close();
+    }
+
+    void __stdcall HikDriver::imageCallback(unsigned char* pData, MV_FRAME_OUT_INFO_EX* pFrameInfo, void* pUser)
+    {
+        auto* self = static_cast<HikDriver*>(pUser);
+        self->onFrame(pData, pFrameInfo);
+    }
+
+    void HikDriver::onFrame(unsigned char* pData, MV_FRAME_OUT_INFO_EX* pFrameInfo)
+    {
+        // 像素格式转换 (Bayer → BGR)
+        MV_CC_PIXEL_CONVERT_PARAM stConvertParam{};
+        stConvertParam.nWidth = pFrameInfo->nWidth;
+        stConvertParam.nHeight = pFrameInfo->nHeight;
+        stConvertParam.pSrcData = pData;
+        stConvertParam.nSrcDataLen = pFrameInfo->nFrameLen;
+        stConvertParam.enSrcPixelType = pFrameInfo->enPixelType;
+        stConvertParam.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
+        stConvertParam.pDstBuffer = pDataForRGB_;
+        stConvertParam.nDstBufferSize = pFrameInfo->nWidth * pFrameInfo->nHeight * 3;
+
+        if (MV_OK != MV_CC_ConvertPixelType(handle_, &stConvertParam))
+            return;
+
+        const cv::Mat temp(pFrameInfo->nHeight, pFrameInfo->nWidth, CV_8UC3, pDataForRGB_);
+        {
+            std::lock_guard lock(m_frame_mutex);
+            temp.copyTo(m_latest_frame);
+            m_frame_ready = true;
+        }
     }
 
     bool HikDriver::init()
@@ -153,54 +184,32 @@ namespace yandy::modules
         if (MV_OK != nRet) return false;
         payload_size_ = stParam.nCurValue;
 
-        // 申请缓存
-        pData_ = static_cast<unsigned char*>(malloc(sizeof(unsigned char) * payload_size_));
-        // 预估RGB缓存大小 (最大分辨率 x 3)
+        // 申请 RGB 转换缓存
         pDataForRGB_ = static_cast<unsigned char*>(malloc(sizeof(unsigned char) * payload_size_ * 3));
+
+        // 注册回调取流
+        nRet = MV_CC_RegisterImageCallBackEx(handle_, imageCallback, this);
+        if (MV_OK != nRet)
+        {
+            m_logger->error("RegisterImageCallBackEx failed: {}", nRet);
+            return false;
+        }
 
         // 开始取流
         nRet = MV_CC_StartGrabbing(handle_);
         if (MV_OK != nRet) return false;
 
         is_open_ = true;
-        m_logger->info("Camera initialized successfully.");
+        m_logger->info("Camera initialized with callback mode.");
         return true;
     }
 
-    bool HikDriver::getFrame(cv::Mat& frame) const
+    bool HikDriver::getLatestFrame(cv::Mat& frame)
     {
-        if (!is_open_) return false;
-
-        MV_FRAME_OUT_INFO_EX stImageInfo = {0};
-        memset(&stImageInfo, 0, sizeof(MV_FRAME_OUT_INFO_EX));
-
-        // 获取一帧 (超时时间 1000ms)
-        int nRet = MV_CC_GetOneFrameTimeout(handle_, pData_, payload_size_, &stImageInfo, 1000);
-        if (nRet != MV_OK)
-        {
-            m_logger->error("Get frame failed: {}", nRet);
-            return false;
-        }
-
-        // 像素格式转换 (转为 BGR 给 OpenCV 使用)
-        // 注意：海康相机通常输出 Bayer 格式，需要转换
-        MV_CC_PIXEL_CONVERT_PARAM stConvertParam{};
-        stConvertParam.nWidth = stImageInfo.nWidth;
-        stConvertParam.nHeight = stImageInfo.nHeight;
-        stConvertParam.pSrcData = pData_;
-        stConvertParam.nSrcDataLen = stImageInfo.nFrameLen;
-        stConvertParam.enSrcPixelType = stImageInfo.enPixelType;
-        stConvertParam.enDstPixelType = PixelType_Gvsp_BGR8_Packed; // 转为BGR
-        stConvertParam.pDstBuffer = pDataForRGB_;
-        stConvertParam.nDstBufferSize = stImageInfo.nWidth * stImageInfo.nHeight * 3;
-
-        nRet = MV_CC_ConvertPixelType(handle_, &stConvertParam);
-        if (MV_OK != nRet) return false;
-
-        // 构造 cv::Mat (这是浅拷贝，注意生命周期，这里拷贝一份出去比较安全)
-        const cv::Mat temp(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC3, pDataForRGB_);
-        temp.copyTo(frame); // 深拷贝
-
+        std::lock_guard lock(m_frame_mutex);
+        if (!m_frame_ready) return false;
+        m_latest_frame.copyTo(frame);
+        m_frame_ready = false; // 标记已消费，避免重复处理同一帧
         return true;
     }
 
@@ -214,7 +223,11 @@ namespace yandy::modules
             is_open_ = false;
             m_logger->info("Camera closed successfully.");
         }
-        m_logger->warn("Camera has already been closed.");
+        if (pDataForRGB_)
+        {
+            free(pDataForRGB_);
+            pDataForRGB_ = nullptr;
+        }
     }
 
     EnergyDetector::EnergyDetector()

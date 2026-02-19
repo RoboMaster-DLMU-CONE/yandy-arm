@@ -130,7 +130,7 @@ void yandy::Robot::visionLoop()
 
     while (m_running.load(std::memory_order_relaxed))
     {
-        if (!m_hik_driver.getFrame(frame))
+        if (!m_hik_driver.getLatestFrame(frame))
             continue;
 
         auto detections = m_detector.detect(frame);
