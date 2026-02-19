@@ -54,6 +54,8 @@ void yandy::Robot::start()
     m_cmd.q_des = m_state.q;
     m_cmd.v_des.setZero();
     m_cmd.tau_ff = m_solver.computeGravity();
+    m_cmd.kp.fill(20.0);
+    m_cmd.kd.fill(1.0);
 
     m_logger->info("Entering main control loop at {}Hz.", static_cast<int>(1.0 / DT));
 
@@ -92,14 +94,37 @@ void yandy::Robot::start()
         case YandyState::Disabled:
         case YandyState::Error:
         default:
-            // idle — 不发送指令
+            // 保持当前位置 + 重力补偿 (仿真物理步进必需)
+            m_cmd.q_des = m_state.q;
+            m_cmd.v_des.setZero();
+            m_cmd.tau_ff = m_solver.computeGravity();
+            m_arm_hw.write(m_cmd);
             break;
         }
 
         // 4. 仿真步进 (真实硬件时 step() 为空)
         m_arm_hw.step(DT);
 
-        // 5. 定频
+        // 5. 写入可视化数据
+        {
+            detail::RobotVizData vd;
+            vd.q = m_state.q;
+            vd.ee_pose = m_solver.getEndEffectorPose();
+            vd.target_pose = m_target_pose;
+            vd.state = cur_state;
+
+            // 每帧尝试读取视觉数据并转换到基座系
+            auto vis = m_vision_buf.try_read();
+            if (vis.has_value() && vis->valid)
+            {
+                vd.vision_valid = true;
+                vd.vision_unit_pose_base = m_solver.transformObjectToBase(vis->unit_pose);
+            }
+
+            m_viz_buf.write(vd);
+        }
+
+        // 6. 定频
         std::this_thread::sleep_until(loop_start + std::chrono::duration<double>(DT));
     }
 
@@ -228,7 +253,7 @@ void yandy::Robot::handleManual()
         Eigen::AngleAxisd(pack.pitch, Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(pack.roll, Eigen::Vector3d::UnitX()));
 
-    // 重力补偿
+    m_target_pose = target;
     m_cmd.tau_ff = m_solver.computeGravity();
 
     // IK 求解
@@ -260,6 +285,7 @@ void yandy::Robot::handleFetching()
 
     // 将相机坐标系下的位姿转换到基座坐标系
     Eigen::Isometry3d target = m_solver.transformObjectToBase(vd->unit_pose);
+    m_target_pose = target;
 
     m_cmd.tau_ff = m_solver.computeGravity();
 
@@ -279,6 +305,7 @@ void yandy::Robot::handleFetching()
 
 void yandy::Robot::handleStore()
 {
+    m_target_pose = STORE_POSE;
     m_cmd.tau_ff = m_solver.computeGravity();
 
     auto q_sol = m_solver.solveIK(STORE_POSE, m_state.q);

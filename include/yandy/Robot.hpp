@@ -26,6 +26,16 @@ namespace yandy
             bool valid{false};
             Eigen::Isometry3d unit_pose{Eigen::Isometry3d::Identity()}; // 相机坐标系下，取置信度最高
         };
+
+        struct RobotVizData
+        {
+            common::VectorJ q{common::VectorJ::Zero()};
+            Eigen::Isometry3d ee_pose{Eigen::Isometry3d::Identity()};
+            Eigen::Isometry3d target_pose{Eigen::Isometry3d::Identity()};
+            YandyState state{YandyState::Disabled};
+            bool vision_valid{false};
+            Eigen::Isometry3d vision_unit_pose_base{Eigen::Isometry3d::Identity()};
+        };
     }
 
     class Robot
@@ -35,6 +45,8 @@ namespace yandy
         ~Robot();
         void start();
         void stop();
+
+        const NBuf<detail::RobotVizData, 3>& vizBuf() const { return m_viz_buf; }
 
     private:
         // ---- 控制循环常量 ----
@@ -55,6 +67,7 @@ namespace yandy
 
         // ---- 线程间通信 ----
         NBuf<detail::VisionData, 3> m_vision_buf;
+        NBuf<detail::RobotVizData, 3> m_viz_buf;
         std::thread m_vision_thread;
 
         // ---- 运行时状态 ----
@@ -63,6 +76,7 @@ namespace yandy
         YandyState m_prev_state{YandyState::Disabled};
         common::JointState m_state{};
         common::JointCommand m_cmd{};
+        Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
 
         // ---- 私有方法 ----
         void visionLoop();
