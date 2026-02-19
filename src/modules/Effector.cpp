@@ -5,4 +5,12 @@ namespace yandy::modules
     Effector::Effector()
     {
     }
+
+    void Effector::closeClaw()
+    {
+    }
+
+    void Effector::openClaw()
+    {
+    }
 }

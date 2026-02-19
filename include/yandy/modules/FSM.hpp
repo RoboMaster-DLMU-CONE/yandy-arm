@@ -341,6 +341,8 @@ namespace yandy::modules
         void processCmd(YandyControlCmd cmd);
         void logState() const;
         YandyState getState() const;
+        bool hasMineralAttached() const { return m_fsm.mineral_attached; }
+        int getStoredCount() const { return m_fsm.stored_count; }
 
     private:
         detail::YandyArmFSMBackend m_fsm;
