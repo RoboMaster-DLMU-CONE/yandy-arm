@@ -19,6 +19,11 @@ namespace yandy::modules
         // 硬件使能/失能
         virtual void enable() = 0;
         virtual void disable() = 0;
+
+        // Simulation step, default empty
+        virtual void step(double /*dt*/)
+        {
+        }
     };
 }
 
