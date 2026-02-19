@@ -94,7 +94,7 @@ int main()
     while (true)
     {
         // 2. 读图
-        if (camera.getFrame(frame))
+        if (camera.getLatestFrame(frame))
         {
             // 3. 推理
             auto start = std::chrono::high_resolution_clock::now();
