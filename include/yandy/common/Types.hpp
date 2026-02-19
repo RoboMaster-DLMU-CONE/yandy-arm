@@ -1,6 +1,7 @@
 #ifndef YANDY_ARM_TYPES_HPP
 #define YANDY_ARM_TYPES_HPP
 
+#include <string_view>
 #include <eigen3/Eigen/Dense>
 #include <RPL/Meta/PacketTraits.hpp>
 
@@ -26,9 +27,22 @@ enum class YandyControlCmd : uint8_t
     CMD_DEC_STORE = 0x82 // 强制库存 -1
 };
 
-inline auto format_as(YandyControlCmd c)
+inline std::string_view format_as(YandyControlCmd c)
 {
-    return static_cast<uint8_t>(c);
+    switch (c)
+    {
+    case YandyControlCmd::CMD_NONE: return "NONE";
+    case YandyControlCmd::CMD_ERROR: return "ERROR";
+    case YandyControlCmd::CMD_SWITCH_ENABLE: return "SWITCH_ENABLE";
+    case YandyControlCmd::CMD_RESET: return "RESET";
+    case YandyControlCmd::CMD_SWITCH_FETCH: return "SWITCH_FETCH";
+    case YandyControlCmd::CMD_SWITCH_STORE: return "SWITCH_STORE";
+    case YandyControlCmd::CMD_SWITCH_GRIP: return "SWITCH_GRIP";
+    case YandyControlCmd::CMD_TOGGLE_HELD: return "TOGGLE_HELD";
+    case YandyControlCmd::CMD_INC_STORE: return "INC_STORE";
+    case YandyControlCmd::CMD_DEC_STORE: return "DEC_STORE";
+    default: return "UNKNOWN";
+    }
 }
 
 struct __attribute__((packed)) YandyControlPack
