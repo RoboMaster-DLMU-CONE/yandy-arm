@@ -1,12 +1,7 @@
 add_executable(yandy_simulate main.cpp)
 
-
-find_package(Curses REQUIRED)
-
 target_link_libraries(yandy_simulate PUBLIC
-        ${CURSES_LIBRARIES}
         rerun_sdk
-        yandy_arm_arm_hw
-        yandy_arm_solver
+        yandy_arm_robot_system
+        pinocchio::pinocchio
 )
-target_include_directories(yandy_simulate PUBLIC ${CURSES_INCLUDE_DIRS})
