@@ -1,4 +1,5 @@
 simulate = true
+can_port = "can0"
 
 [joint_1]
 can_id = 0x01

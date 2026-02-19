@@ -14,6 +14,7 @@ target_link_libraries(yandy_arm_arm_hw
         yandy_arm_logger
         yandy_arm_types
         OneMotor::OneMotor
+        pinocchio::pinocchio
         tomlplusplus::tomlplusplus
 )
 
@@ -76,8 +77,8 @@ if (YANDY_BUILD_TELEOP_CLIENT)
     add_subdirectory(teleop_client)
 endif ()
 
-add_executable(yandy_arm main.cpp)
-target_link_libraries(yandy_arm
+add_library(yandy_arm_robot_system SHARED Robot.cpp)
+target_link_libraries(yandy_arm_robot_system
         PUBLIC
         yandy_arm_arm_hw
         yandy_arm_effector
@@ -85,5 +86,10 @@ target_link_libraries(yandy_arm
         yandy_arm_vision_system
         yandy_arm_fsm
         yandy_arm_input_provider
-        tomlplusplus::tomlplusplus
+)
+
+add_executable(yandy_arm main.cpp)
+target_link_libraries(yandy_arm
+        PUBLIC
+        yandy_arm_robot_system
 )
