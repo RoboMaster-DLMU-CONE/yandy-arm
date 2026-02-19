@@ -1,6 +1,7 @@
 #ifndef YANDY_ARM_ROBOT_HPP
 #define YANDY_ARM_ROBOT_HPP
 
+#include <thread>
 
 #include <yandy/modules/ArmHW.hpp>
 #include <yandy/modules/DynamicsSolver.hpp>
@@ -22,7 +23,8 @@ namespace yandy
 
         struct VisionData
         {
-            Eigen::Isometry3d unit_pose; // 只有一个，取置信度最高
+            bool valid{false};
+            Eigen::Isometry3d unit_pose{Eigen::Isometry3d::Identity()}; // 相机坐标系下，取置信度最高
         };
     }
 
@@ -35,6 +37,13 @@ namespace yandy
         void stop();
 
     private:
+        // ---- 控制循环常量 ----
+        static constexpr double DT = 0.004; // 250Hz
+
+        // 存储模式预设位姿 (基座坐标系)
+        static const Eigen::Isometry3d STORE_POSE;
+
+        // ---- Modules ----
         modules::ArmHW m_arm_hw;
         modules::DynamicsSolver m_solver;
         modules::YandyArmFSM m_fsm;
@@ -43,8 +52,24 @@ namespace yandy
         modules::EnergyDetector m_detector;
         modules::EnergyPoseSolver m_pose_solver;
         modules::Effector m_effector;
+
+        // ---- 线程间通信 ----
+        NBuf<detail::VisionData, 3> m_vision_buf;
+        std::thread m_vision_thread;
+
+        // ---- 运行时状态 ----
         std::shared_ptr<spdlog::logger> m_logger;
         std::atomic<bool> m_running{true};
+        YandyState m_prev_state{YandyState::Disabled};
+        common::JointState m_state{};
+        common::JointCommand m_cmd{};
+
+        // ---- 私有方法 ----
+        void visionLoop();
+        void onStateTransition(YandyState from, YandyState to);
+        void handleManual();
+        void handleFetching();
+        void handleStore();
     };
 }
 
