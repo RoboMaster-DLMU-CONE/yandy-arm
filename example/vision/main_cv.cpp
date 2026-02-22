@@ -23,6 +23,9 @@ void draw3DVisualizer(cv::Mat& img, const Eigen::Isometry3d& pose, const cv::Mat
     cv::Mat rvec, tvec;
     eigen2cv(pose, rvec, tvec);
 
+    // 获取旋转矩阵以便计算 RPY
+    Eigen::Matrix3d R = pose.rotation();
+
     // 1. 定义 3D 模型点 (标准单位: 米)
     // 根据你的定义，物体是一个宽60mm(半径30mm)，高75mm的物体
     std::vector<cv::Point3f> object_pts;
@@ -69,6 +72,17 @@ void draw3DVisualizer(cv::Mat& img, const Eigen::Isometry3d& pose, const cv::Mat
     char text[100];
     sprintf(text, "X:%.2f Y:%.2f Z:%.2f", tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
     cv::putText(img, text, cv::Point(20, 50), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 1);
+
+    // 计算并显示 RPY (Roll, Pitch, Yaw)，以度为单位，显示在 XYZ 下方
+    constexpr double rad2deg = 180.0 / std::numbers::pi;
+    // Eigen::Matrix3d R 已在函数开头计算
+    Eigen::Vector3d rpy = R.eulerAngles(0, 1, 2); // roll, pitch, yaw (radians)
+    const double roll_deg = rpy[0] * rad2deg;
+    const double pitch_deg = rpy[1] * rad2deg;
+    const double yaw_deg = rpy[2] * rad2deg;
+    char rpy_text[100];
+    sprintf(rpy_text, "R:%.1f P:%.1f Y:%.1f", roll_deg, pitch_deg, yaw_deg);
+    cv::putText(img, rpy_text, cv::Point(20, 75), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 1);
 }
 
 using namespace std::chrono_literals;

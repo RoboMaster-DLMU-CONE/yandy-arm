@@ -91,7 +91,6 @@ namespace yandy::modules
         Eigen::Matrix3d R_eigen;
         Eigen::Vector3d t_eigen;
 
-        // OpenCV 是 double 还是 float 取决于输入，这里为了保险做一下 cast
         for (int i = 0; i < 3; i++)
         {
             t_eigen(i) = tvec.at<double>(i);
