@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 pub struct RobotView {
     pub nodes: Vec<SceneNode>,
+    pub end_effector_link: Option<String>,
+    pub end_effector_path: Option<std::path::PathBuf>,
 }
 
 impl RobotView {
@@ -17,7 +19,11 @@ impl RobotView {
         let robot = urdf_rs::read_file(urdf_path).expect("Failed to read URDF");
         let base_dir = Path::new(urdf_path).parent().unwrap();
         
-        let mut view = RobotView { nodes: Vec::new() };
+        let mut view = RobotView { 
+            nodes: Vec::new(),
+            end_effector_link: None,
+            end_effector_path: None,
+        };
         
         // Find base link
         let base_link = robot.links.iter().find(|l| l.name == robot.name || l.name == "base_link").or_else(|| robot.links.first());
@@ -29,6 +35,20 @@ impl RobotView {
              }
              
              let link_map: HashMap<String, &urdf_rs::Link> = robot.links.iter().map(|l| (l.name.clone(), l)).collect();
+             
+             // Find end-effector (leaf node with no children)
+             for link in &robot.links {
+                 if !child_map.contains_key(&link.name) {
+                     view.end_effector_link = Some(link.name.clone());
+                     // Get mesh path
+                     if let Some(visual) = link.visual.first() {
+                         if let urdf_rs::Geometry::Mesh { filename, .. } = &visual.geometry {
+                             view.end_effector_path = Some(base_dir.join(filename));
+                         }
+                     }
+                     break;
+                 }
+             }
              
              Self::spawn_link_recursive(window, &link_map[&link.name], &link_map, &child_map, base_dir, na::Isometry3::identity(), &mut view.nodes);
         }

@@ -3,6 +3,7 @@ mod robot_view;
 
 use kiss3d::event::{Action, Key, MouseButton, WindowEvent};
 use kiss3d::light::Light;
+use kiss3d::scene::SceneNode;
 use kiss3d::window::Canvas;
 use kiss3d::window::Window;
 use nalgebra as na;
@@ -10,6 +11,45 @@ use packet::{YandyControlCmd, YandyControlPack};
 use robot_view::RobotView;
 use std::net::UdpSocket;
 use std::time::Instant;
+
+fn create_coordinate_axes(target_node: &mut SceneNode, ui_scale: f32) {
+    // X Axis (Red)
+    let mut axis_x = target_node.add_cube(ui_scale, ui_scale * 0.1, ui_scale * 0.1);
+    axis_x.set_color(1.0, 0.0, 0.0);
+    axis_x.set_local_translation(na::Translation3::new(ui_scale / 2.0, 0.0, 0.0));
+
+    // Y Axis (Green)
+    let mut axis_y = target_node.add_cube(ui_scale * 0.1, ui_scale, ui_scale * 0.1);
+    axis_y.set_color(0.0, 1.0, 0.0);
+    axis_y.set_local_translation(na::Translation3::new(0.0, ui_scale / 2.0, 0.0));
+
+    // Z Axis (Blue)
+    let mut axis_z = target_node.add_cube(ui_scale * 0.1, ui_scale * 0.1, ui_scale);
+    axis_z.set_color(0.0, 0.0, 1.0);
+    axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale / 2.0));
+}
+
+fn load_stl_mesh(path: &std::path::Path) -> Option<std::rc::Rc<std::cell::RefCell<kiss3d::resource::Mesh>>> {
+    use std::fs::File;
+    let mut file = File::open(path).ok()?;
+    let stl = stl_io::read_stl(&mut file).ok()?;
+    
+    let mut coords = Vec::new();
+    let mut indices = Vec::new();
+    
+    for (i, face) in stl.faces.iter().enumerate() {
+        for &v_idx in &face.vertices {
+            let v = stl.vertices[v_idx];
+            coords.push(na::Point3::new(v[0], v[1], v[2]));
+        }
+        let base = i as u16 * 3;
+        indices.push(na::Point3::new(base, base + 1, base + 2));
+    }
+    
+    Some(std::rc::Rc::new(std::cell::RefCell::new(
+        kiss3d::resource::Mesh::new(coords, indices, None, None, false)
+    )))
+}
 
 struct FilteringCamera {
     inner: kiss3d::camera::ArcBall,
@@ -97,25 +137,31 @@ fn main() {
         .into_owned();
 
     println!("Loading URDF from: {}", absolute_path);
-    // Simple load attempt
-    let _robot_view = RobotView::new(&mut window, &absolute_path);
+    let robot_view = RobotView::new(&mut window, &absolute_path);
 
     // Target Visual (Coordinate Axes)
     let mut target_node = window.add_group();
-    // X Axis (Red)
-    let mut axis_x = target_node.add_cube(0.2, 0.02, 0.02);
-    axis_x.set_color(1.0, 0.0, 0.0);
-    axis_x.set_local_translation(na::Translation3::new(0.1, 0.0, 0.0));
-
-    // Y Axis (Green)
-    let mut axis_y = target_node.add_cube(0.02, 0.2, 0.02);
-    axis_y.set_color(0.0, 1.0, 0.0);
-    axis_y.set_local_translation(na::Translation3::new(0.0, 0.1, 0.0));
-
-    // Z Axis (Blue)
-    let mut axis_z = target_node.add_cube(0.02, 0.02, 0.2);
-    axis_z.set_color(0.0, 0.0, 1.0);
-    axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, 0.1));
+    
+    // UI Scale factor for axes and effector visualization
+    let mut ui_scale = 0.5; // Start with 0.5m size
+    create_coordinate_axes(&mut target_node, ui_scale);
+    
+    // Load and attach end-effector mesh to target_node
+    if let Some(ee_path) = &robot_view.end_effector_path {
+        if let Some(mesh) = load_stl_mesh(ee_path) {
+            let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
+            ee_node.set_color(0.8, 0.2, 0.2); // Reddish for end-effector
+            // Offset slightly from origin for visibility
+            ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
+            if let Some(ee_link_name) = &robot_view.end_effector_link {
+                println!("✓ Loaded end-effector: {}", ee_link_name);
+            }
+        } else {
+            if let Some(ee_link_name) = &robot_view.end_effector_link {
+                println!("⚠ Could not load end-effector mesh for: {}", ee_link_name);
+            }
+        }
+    }
 
     // State
     let mut desired_pos = na::Point3::new(0.2, 0.0, 0.2);
@@ -196,6 +242,36 @@ fn main() {
                         let is_ctrl = window.get_key(Key::LControl) == Action::Press
                             || window.get_key(Key::RControl) == Action::Press;
                         match key {
+                            // UI Scale controls
+                            Key::Minus => {
+                                ui_scale = (ui_scale - 0.1).max(0.1); // Min 0.1m
+                                target_node.unlink();
+                                target_node = window.add_group();
+                                create_coordinate_axes(&mut target_node, ui_scale);
+                                // Reload end-effector at new scale
+                                if let Some(ee_path) = &robot_view.end_effector_path {
+                                    if let Some(mesh) = load_stl_mesh(ee_path) {
+                                        let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
+                                        ee_node.set_color(0.8, 0.2, 0.2);
+                                        ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
+                                    }
+                                }
+                            }
+                            Key::Equals => {
+                                ui_scale = (ui_scale + 0.1).min(2.0); // Max 2.0m
+                                target_node.unlink();
+                                target_node = window.add_group();
+                                create_coordinate_axes(&mut target_node, ui_scale);
+                                // Reload end-effector at new scale
+                                if let Some(ee_path) = &robot_view.end_effector_path {
+                                    if let Some(mesh) = load_stl_mesh(ee_path) {
+                                        let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
+                                        ee_node.set_color(0.8, 0.2, 0.2);
+                                        ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
+                                    }
+                                }
+                            }
+                            
                             Key::F if is_ctrl => cmd_state = YandyControlCmd::ToggleHeld,
                             Key::E if is_ctrl => cmd_state = YandyControlCmd::IncStore,
                             Key::Q if is_ctrl => cmd_state = YandyControlCmd::DecStore,
@@ -287,8 +363,15 @@ fn main() {
             &na::Point3::new(1.0, 1.0, 1.0),
         );
         window.draw_text(
-            &format!("CMD: {:?}", cmd_state),
+            &format!("UI Scale: {:.2}m ([-/=] to adjust)", ui_scale),
             &na::Point2::new(10.0, 90.0),
+            40.0,
+            &kiss3d::text::Font::default(),
+            &na::Point3::new(1.0, 1.0, 0.5),
+        );
+        window.draw_text(
+            &format!("CMD: {:?}", cmd_state),
+            &na::Point2::new(10.0, 130.0),
             40.0,
             &kiss3d::text::Font::default(),
             &na::Point3::new(1.0, 1.0, 0.0),
