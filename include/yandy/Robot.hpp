@@ -34,6 +34,7 @@ namespace yandy
             Eigen::Isometry3d target_pose{Eigen::Isometry3d::Identity()};
             YandyState state{YandyState::Disabled};
             bool vision_valid{false};
+            Eigen::Isometry3d vision_unit_pose{Eigen::Isometry3d::Identity()};
             Eigen::Isometry3d vision_unit_pose_base{Eigen::Isometry3d::Identity()};
         };
     }
@@ -77,6 +78,7 @@ namespace yandy
         common::JointState m_state{};
         common::JointCommand m_cmd{};
         Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
+        bool m_is_simulate = false;
 
         // ---- 私有方法 ----
         void visionLoop();

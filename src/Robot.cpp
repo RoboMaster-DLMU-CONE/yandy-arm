@@ -1,6 +1,9 @@
 #include <yandy/Robot.hpp>
 #include <chrono>
 #include <algorithm>
+#include <toml++/toml.hpp>
+
+#define YANDY_ROBOT_CONFIG YANDY_CONFIG_PATH "robot.toml"
 
 // 存储模式预设位姿 (基座坐标系) — 后续可改为从 config 加载
 // TODO: 根据实际机械臂工作空间调整此位姿
@@ -22,6 +25,14 @@ yandy::Robot::Robot()
         m_fsm.processCmd(cmd);
     });
     m_logger = core::create_logger("YandyRobot", spdlog::level::info);
+    m_logger->info("try loading config from {}", YANDY_ROBOT_CONFIG);
+
+    auto tbl = toml::parse_file(YANDY_ROBOT_CONFIG);
+    m_is_simulate = tbl["simulate"].value<bool>().value();
+    if (m_is_simulate)
+    {
+        m_logger->info("Simulate mode is on.");
+    }
 }
 
 yandy::Robot::~Robot()
@@ -118,6 +129,7 @@ void yandy::Robot::start()
             if (vis.has_value() && vis->valid)
             {
                 vd.vision_valid = true;
+                vd.vision_unit_pose = vis->unit_pose;
                 vd.vision_unit_pose_base = m_solver.transformObjectToBase(vis->unit_pose);
             }
 
@@ -164,10 +176,10 @@ void yandy::Robot::visionLoop()
 
         // 取置信度最高的目标
         const auto& best = *std::max_element(detections.begin(), detections.end(),
-            [](const modules::EnergyUnit& a, const modules::EnergyUnit& b)
-            {
-                return a.confidence < b.confidence;
-            });
+                                             [](const modules::EnergyUnit& a, const modules::EnergyUnit& b)
+                                             {
+                                                 return a.confidence < b.confidence;
+                                             });
 
         Eigen::Isometry3d T_cam_obj;
         if (m_pose_solver.solve(best, T_cam_obj))
@@ -284,12 +296,18 @@ void yandy::Robot::handleFetching()
     }
 
     // 将相机坐标系下的位姿转换到基座坐标系
-    Eigen::Isometry3d target = m_solver.transformObjectToBase(vd->unit_pose);
-    m_target_pose = target;
+    if (m_is_simulate)
+    {
+        m_target_pose = vd->unit_pose;
+    }
+    else
+    {
+        m_target_pose = m_solver.transformObjectToBase(vd->unit_pose);
+    }
 
     m_cmd.tau_ff = m_solver.computeGravity();
 
-    auto q_sol = m_solver.solveIK(target, m_state.q);
+    auto q_sol = m_solver.solveIK(m_target_pose, m_state.q);
     if (q_sol.has_value())
     {
         m_cmd.q_des = q_sol.value();
