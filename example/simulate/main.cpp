@@ -32,7 +32,7 @@ static void register_asset(rerun::RecordingStream& rec, const std::string& entit
         throw std::runtime_error("Failed to open mesh file: " + mesh_path.string());
 
     std::vector<uint8_t> bytes((std::istreambuf_iterator(file)),
-                                std::istreambuf_iterator<char>());
+                               std::istreambuf_iterator<char>());
     if (bytes.empty())
         throw std::runtime_error("Mesh file is empty: " + mesh_path.string());
 
@@ -127,10 +127,10 @@ int main()
             const Eigen::Quaterniond q(oMg.rotation());
 
             rec.log_static(viz_root + "/" + geom.name,
-                    rerun::Transform3D::from_translation_rotation(
-                        rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z()),
-                        rerun::Rotation3D(rerun::Quaternion::from_xyzw(
-                            (float)q.x(), (float)q.y(), (float)q.z(), (float)q.w()))));
+                           rerun::Transform3D::from_translation_rotation(
+                               rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z()),
+                               rerun::Rotation3D(rerun::Quaternion::from_xyzw(
+                                   (float)q.x(), (float)q.y(), (float)q.z(), (float)q.w()))));
         }
 
         const auto t1 = std::chrono::steady_clock::now();
@@ -142,47 +142,38 @@ int main()
             const Eigen::Quaterniond q(tp.rotation());
 
             rec.log_static("world/target_ghost",
-                    rerun::Transform3D(
-                        {(float)t.x(), (float)t.y(), (float)t.z()},
-                        rerun::Quaternion::from_xyzw(q.x(), q.y(), q.z(), q.w())));
+                           rerun::Transform3D(
+                               {(float)t.x(), (float)t.y(), (float)t.z()},
+                               rerun::Quaternion::from_xyzw(q.x(), q.y(), q.z(), q.w())));
         }
 
         // C. 实际末端点 (红色球) — 只更新 Transform
         {
             const auto& t = vd.ee_pose.translation();
             rec.log_static("world/ee_actual",
-                    rerun::Transform3D(rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z())));
+                           rerun::Transform3D(
+                               rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z())));
         }
 
         // D. 视觉检测到的能量单元
         if (vd.vision_valid)
         {
-            const auto& vp = vd.vision_unit_pose_base;
+            const auto& vp = vd.vision_unit_pose;
             const auto& t = vp.translation();
             const Eigen::Quaterniond q(vp.rotation());
 
             rec.log_static("world/energy_unit",
-                    rerun::Transform3D::from_translation_rotation_scale(
-                        rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z()),
-                        rerun::Rotation3D(rerun::Quaternion::from_xyzw(
-                            (float)q.x(), (float)q.y(), (float)q.z(), (float)q.w())),
-                        rerun::components::Scale3D(0.001f)));
+                           rerun::Transform3D::from_translation_rotation_scale(
+                               rerun::components::Translation3D((float)t.x(), (float)t.y(), (float)t.z()),
+                               rerun::Rotation3D(rerun::Quaternion::from_xyzw(
+                                   (float)q.x(), (float)q.y(), (float)q.z(), (float)q.w())),
+                               rerun::components::Scale3D(0.001f)));
         }
 
         // E. 状态文本 (TextDocument 替换式更新，不累加)
         rec.log_static("state", rerun::TextDocument(std::string(format_as(vd.state))));
 
         const auto t2 = std::chrono::steady_clock::now();
-
-        // 每 300 帧 (~5s) 输出一次诊断
-        if (++frame_count % 300 == 0)
-        {
-            auto ms_geom = std::chrono::duration<double, std::milli>(t1 - t0).count();
-            auto ms_rerun = std::chrono::duration<double, std::milli>(t2 - t1).count();
-            auto ms_total = std::chrono::duration<double, std::milli>(t2 - loop_start).count();
-            diag_logger->info("frame={} geom={:.2f}ms rerun={:.2f}ms total={:.2f}ms",
-                              frame_count, ms_geom, ms_rerun, ms_total);
-        }
 
         std::this_thread::sleep_until(loop_start + std::chrono::duration<double>(viz_dt));
     }
