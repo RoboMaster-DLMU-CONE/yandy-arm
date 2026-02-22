@@ -36,17 +36,21 @@ impl RobotView {
              
              let link_map: HashMap<String, &urdf_rs::Link> = robot.links.iter().map(|l| (l.name.clone(), l)).collect();
              
-             // Find end-effector (leaf node with no children)
+             // Find end-effector (last link with visual geometry)
+             let mut last_link_with_visual: Option<&urdf_rs::Link> = None;
              for link in &robot.links {
-                 if !child_map.contains_key(&link.name) {
-                     view.end_effector_link = Some(link.name.clone());
-                     // Get mesh path
-                     if let Some(visual) = link.visual.first() {
-                         if let urdf_rs::Geometry::Mesh { filename, .. } = &visual.geometry {
-                             view.end_effector_path = Some(base_dir.join(filename));
-                         }
+                 if !link.visual.is_empty() {
+                     last_link_with_visual = Some(link);
+                 }
+             }
+             
+             if let Some(link) = last_link_with_visual {
+                 view.end_effector_link = Some(link.name.clone());
+                 // Get mesh path
+                 if let Some(visual) = link.visual.first() {
+                     if let urdf_rs::Geometry::Mesh { filename, .. } = &visual.geometry {
+                         view.end_effector_path = Some(base_dir.join(filename));
                      }
-                     break;
                  }
              }
              

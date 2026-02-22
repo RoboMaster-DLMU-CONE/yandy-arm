@@ -134,9 +134,9 @@ namespace yandy::modules
 
         // 转换目标位姿为 Pinocchio 的 SE3 格式
         const pinocchio::SE3 oMdes(target_pose.rotation(), target_pose.translation());
+        // 获取当前末端位姿 (引用,该值会实时更新)
+        const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
         // 算法参数
-        constexpr double damping = 1e-3; // 阻尼系数 (lambda)，防止奇异点飞车
-        constexpr double step_size = 1.0; // 步长，通常设为 1.0
         // 关节速度增量 (dq)
         Eigen::VectorXd v(m_model.nv);
 
@@ -149,13 +149,10 @@ namespace yandy::modules
             // 迭代循环
             for (int i = 0; i < max_iter; ++i)
             {
-                // 正运动学 (FK) 更新当前位姿
-                pinocchio::forwardKinematics(m_model, m_data, q);
+                constexpr double damping = 1e-3;
+                // 计算正向运动学和关节雅可比
+                pinocchio::computeJointJacobians(m_model, m_data, q);
                 pinocchio::updateFramePlacements(m_model, m_data);
-
-                // 获取当前末端位姿
-                const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
-
 
                 // 计算当前位姿和目标位姿之间的 6D 误差 (在末端局部坐标系下)
                 // logic: err = log(oMcurr^{-1} * oMdes)
@@ -165,11 +162,17 @@ namespace yandy::modules
                 // 忽略绕局部 Z 轴的旋转误差
                 err6(5) = 0;
 
-                // 判断是否收敛（此时衡量 5D 误差）
-                if (err6.norm() < tol)
+                const double current_err_norm = err6.norm();
+                if (current_err_norm < min_err)
                 {
-                    success = true;
-                    break;
+                    min_err = current_err_norm;
+                    best_q = q; // 保存历史上误差最小的一组解
+                }
+
+                // 判断是否收敛（此时衡量 5D 误差）
+                if (current_err_norm < tol)
+                {
+                    return q;
                 }
 
                 // 计算 6D 雅可比矩阵
@@ -188,27 +191,30 @@ namespace yandy::modules
                 Eigen::Vector<double, common::JOINT_NUM> g;
                 g = J6.transpose() * err6;
 
+                // 求解关节速度增量
                 v = H.llt().solve(g);
 
-                // 更新关节角
-                // q = q + v * step_size
-                // pinocchio::integrate 处理了欧拉角/四元数等复杂情况，虽然对纯旋转轴简单的加法也可以
-                pinocchio::integrate(m_model, q, v * step_size, q);
-
-                // [G] 关节限位夹钳 (Clamping)
-                // 防止解算出超出物理极限的角度
-                for (int k = 0; k < common::JOINT_NUM; k++)
+                // 步长限制，防止奇异点附近发散
+                if (constexpr double max_step = 0.5; v.norm() > max_step)
                 {
-                    // 需要确保 URDF 里 lower/upper 填对了
-                    q[k] = std::max(m_model.lowerPositionLimit[k], std::min(m_model.upperPositionLimit[k], q[k]));
+                    v = v.normalized() * max_step;
                 }
+
+                // 更新关节角
+                // q = q + v
+                // pinocchio::integrate 处理了欧拉角/四元数等复杂情况，虽然对纯旋转轴简单的加法也可以
+                pinocchio::integrate(m_model, q, v, q);
+
+                // 关节限位夹钳 (Clamping)
+                // 防止解算出超出物理极限的角度
+                q = q.cwiseMax(m_model.lowerPositionLimit).cwiseMin(m_model.upperPositionLimit);
             }
         }
 
         // 对于 5 自由度机械臂，求解 6D 目标往往无法完美收敛（success=false）
         // 此时我们返回“最后一次收敛的结果”，让机械臂尽力而为
         // m_logger->debug("[IK] Failed to converge. Error: {}", err.norm())
-        return q;
+        return best_q;
     }
 
     common::VectorJ DynamicsSolver::generateRandomJointPositions()

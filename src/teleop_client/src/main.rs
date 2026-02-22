@@ -3,7 +3,6 @@ mod robot_view;
 
 use kiss3d::event::{Action, Key, MouseButton, WindowEvent};
 use kiss3d::light::Light;
-use kiss3d::scene::SceneNode;
 use kiss3d::window::Canvas;
 use kiss3d::window::Window;
 use nalgebra as na;
@@ -11,23 +10,6 @@ use packet::{YandyControlCmd, YandyControlPack};
 use robot_view::RobotView;
 use std::net::UdpSocket;
 use std::time::Instant;
-
-fn create_coordinate_axes(target_node: &mut SceneNode, ui_scale: f32) {
-    // X Axis (Red)
-    let mut axis_x = target_node.add_cube(ui_scale, ui_scale * 0.1, ui_scale * 0.1);
-    axis_x.set_color(1.0, 0.0, 0.0);
-    axis_x.set_local_translation(na::Translation3::new(ui_scale / 2.0, 0.0, 0.0));
-
-    // Y Axis (Green)
-    let mut axis_y = target_node.add_cube(ui_scale * 0.1, ui_scale, ui_scale * 0.1);
-    axis_y.set_color(0.0, 1.0, 0.0);
-    axis_y.set_local_translation(na::Translation3::new(0.0, ui_scale / 2.0, 0.0));
-
-    // Z Axis (Blue)
-    let mut axis_z = target_node.add_cube(ui_scale * 0.1, ui_scale * 0.1, ui_scale);
-    axis_z.set_color(0.0, 0.0, 1.0);
-    axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale / 2.0));
-}
 
 fn load_stl_mesh(path: &std::path::Path) -> Option<std::rc::Rc<std::cell::RefCell<kiss3d::resource::Mesh>>> {
     use std::fs::File;
@@ -139,28 +121,64 @@ fn main() {
     println!("Loading URDF from: {}", absolute_path);
     let robot_view = RobotView::new(&mut window, &absolute_path);
 
-    // Target Visual (Coordinate Axes)
+    // Global coordinate axes (fixed at world origin)
+    let mut global_axes = window.add_group();
+    let mut global_axis_x = global_axes.add_cube(1.0, 0.05, 0.05);
+    global_axis_x.set_color(1.0, 0.0, 0.0); // Red for X
+    global_axis_x.set_local_translation(na::Translation3::new(0.5, 0.0, 0.0));
+    
+    let mut global_axis_y = global_axes.add_cube(0.05, 1.0, 0.05);
+    global_axis_y.set_color(0.0, 1.0, 0.0); // Green for Y
+    global_axis_y.set_local_translation(na::Translation3::new(0.0, 0.5, 0.0));
+    
+    let mut global_axis_z = global_axes.add_cube(0.05, 0.05, 1.0);
+    global_axis_z.set_color(0.0, 0.0, 1.0); // Blue for Z
+    global_axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, 0.5));
+
+    // Target Visual (End-effector frame with axes and mesh)
     let mut target_node = window.add_group();
     
-    // UI Scale factor for axes and effector visualization
-    let mut ui_scale = 0.5; // Start with 0.5m size
-    create_coordinate_axes(&mut target_node, ui_scale);
+    // Add end-effector coordinate axes (small, at TCP)
+    let mut ee_axis_x = target_node.add_cube(0.1, 0.01, 0.01);
+    ee_axis_x.set_color(1.0, 0.0, 0.0);
+    ee_axis_x.set_local_translation(na::Translation3::new(0.05, 0.0, 0.0));
+    
+    let mut ee_axis_y = target_node.add_cube(0.01, 0.1, 0.01);
+    ee_axis_y.set_color(0.0, 1.0, 0.0);
+    ee_axis_y.set_local_translation(na::Translation3::new(0.0, 0.05, 0.0));
+    
+    let mut ee_axis_z = target_node.add_cube(0.01, 0.01, 0.1);
+    ee_axis_z.set_color(0.0, 0.0, 1.0);
+    ee_axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, 0.05));
+    
+    // UI Scale factor for overall scene visualization
+    let mut ui_scale = 1.0; // Start with 1.0x scaling
     
     // Load and attach end-effector mesh to target_node
+    let mut _ee_mesh_node = None; // Keep reference to prevent destruction
+    println!("End-effector link: {:?}", robot_view.end_effector_link);
+    println!("End-effector path: {:?}", robot_view.end_effector_path);
+    
     if let Some(ee_path) = &robot_view.end_effector_path {
+        println!("Attempting to load STL from: {:?}", ee_path);
+        println!("File exists: {}", ee_path.exists());
+        
         if let Some(mesh) = load_stl_mesh(ee_path) {
+            println!("✓ STL mesh loaded successfully");
             let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
             ee_node.set_color(0.8, 0.2, 0.2); // Reddish for end-effector
-            // Offset slightly from origin for visibility
-            ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
+            _ee_mesh_node = Some(ee_node);
             if let Some(ee_link_name) = &robot_view.end_effector_link {
                 println!("✓ Loaded end-effector: {}", ee_link_name);
             }
         } else {
+            println!("⚠ Failed to load STL mesh");
             if let Some(ee_link_name) = &robot_view.end_effector_link {
                 println!("⚠ Could not load end-effector mesh for: {}", ee_link_name);
             }
         }
+    } else {
+        println!("⚠ No end-effector path found");
     }
 
     // State
@@ -193,8 +211,10 @@ fn main() {
     let mut cmd_state = YandyControlCmd::None;
 
     // Camera
+    let initial_eye = na::Point3::new(1.0, 1.0, 1.0);
+    let camera_target = na::Point3::origin();
     let mut camera = FilteringCamera {
-        inner: kiss3d::camera::ArcBall::new(na::Point3::new(1.0, 1.0, 1.0), na::Point3::origin()),
+        inner: kiss3d::camera::ArcBall::new(initial_eye, camera_target),
         right_mouse_down: false,
     };
 
@@ -242,34 +262,28 @@ fn main() {
                         let is_ctrl = window.get_key(Key::LControl) == Action::Press
                             || window.get_key(Key::RControl) == Action::Press;
                         match key {
-                            // UI Scale controls
+                            // UI Scale controls - zoom camera in/out
                             Key::Minus => {
-                                ui_scale = (ui_scale - 0.1).max(0.1); // Min 0.1m
-                                target_node.unlink();
-                                target_node = window.add_group();
-                                create_coordinate_axes(&mut target_node, ui_scale);
-                                // Reload end-effector at new scale
-                                if let Some(ee_path) = &robot_view.end_effector_path {
-                                    if let Some(mesh) = load_stl_mesh(ee_path) {
-                                        let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
-                                        ee_node.set_color(0.8, 0.2, 0.2);
-                                        ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
-                                    }
-                                }
+                                ui_scale = (ui_scale - 0.1_f32).max(0.2);
+                                // Scale the camera distance by adjusting eye position
+                                let new_eye = na::Point3::new(
+                                    initial_eye.x / ui_scale,
+                                    initial_eye.y / ui_scale,
+                                    initial_eye.z / ui_scale,
+                                );
+                                camera.inner = kiss3d::camera::ArcBall::new(new_eye, camera_target);
+                                camera.inner.set_dist_step(0.5);
                             }
                             Key::Equals => {
-                                ui_scale = (ui_scale + 0.1).min(2.0); // Max 2.0m
-                                target_node.unlink();
-                                target_node = window.add_group();
-                                create_coordinate_axes(&mut target_node, ui_scale);
-                                // Reload end-effector at new scale
-                                if let Some(ee_path) = &robot_view.end_effector_path {
-                                    if let Some(mesh) = load_stl_mesh(ee_path) {
-                                        let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
-                                        ee_node.set_color(0.8, 0.2, 0.2);
-                                        ee_node.set_local_translation(na::Translation3::new(0.0, 0.0, ui_scale * 0.5));
-                                    }
-                                }
+                                ui_scale = (ui_scale + 0.1_f32).min(3.0);
+                                // Scale the camera distance by adjusting eye position
+                                let new_eye = na::Point3::new(
+                                    initial_eye.x / ui_scale,
+                                    initial_eye.y / ui_scale,
+                                    initial_eye.z / ui_scale,
+                                );
+                                camera.inner = kiss3d::camera::ArcBall::new(new_eye, camera_target);
+                                camera.inner.set_dist_step(0.5);
                             }
                             
                             Key::F if is_ctrl => cmd_state = YandyControlCmd::ToggleHeld,
@@ -363,7 +377,7 @@ fn main() {
             &na::Point3::new(1.0, 1.0, 1.0),
         );
         window.draw_text(
-            &format!("UI Scale: {:.2}m ([-/=] to adjust)", ui_scale),
+            &format!("Zoom: {:.1}x ([-/=] to adjust)", ui_scale),
             &na::Point2::new(10.0, 90.0),
             40.0,
             &kiss3d::text::Font::default(),
