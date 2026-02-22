@@ -44,7 +44,7 @@ namespace yandy::modules
         Eigen::Isometry3d transformObjectToBase(const Eigen::Isometry3d& T_cam_obj);
 
         /**
-            * @brief 数值法逆运动学求解 (CLIK算法)
+            * @brief 数值法逆运动学求解 (专为5dof优化)
             *
             * @param target_pose 期望的末端位姿 (基座坐标系)
             * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
@@ -52,7 +52,7 @@ namespace yandy::modules
             * @param max_iter    最大迭代次数
             * @return VectorJ 返回关节角
             */
-        common::VectorJ solveIK(
+        common::VectorJ solveIK5(
             const Eigen::Isometry3d& target_pose,
             const common::VectorJ& q_guess,
             double tol = 1e-4,

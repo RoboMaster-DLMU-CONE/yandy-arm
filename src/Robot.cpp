@@ -175,11 +175,11 @@ void yandy::Robot::visionLoop()
             continue;
 
         // 取置信度最高的目标
-        const auto& best = *std::max_element(detections.begin(), detections.end(),
-                                             [](const modules::EnergyUnit& a, const modules::EnergyUnit& b)
-                                             {
-                                                 return a.confidence < b.confidence;
-                                             });
+        const auto& best = *std::ranges::max_element(detections,
+                                                     [](const modules::EnergyUnit& a, const modules::EnergyUnit& b)
+                                                     {
+                                                         return a.confidence < b.confidence;
+                                                     });
 
         Eigen::Isometry3d T_cam_obj;
         if (m_pose_solver.solve(best, T_cam_obj))
@@ -269,7 +269,7 @@ void yandy::Robot::handleManual()
     m_cmd.tau_ff = m_solver.computeGravity();
 
     // IK 求解
-    auto q_sol = m_solver.solveIK(target, m_state.q);
+    const auto q_sol = m_solver.solveIK5(target, m_state.q);
 
     m_cmd.q_des = q_sol;
     m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
@@ -300,7 +300,7 @@ void yandy::Robot::handleFetching()
 
     m_cmd.tau_ff = m_solver.computeGravity();
 
-    auto q_sol = m_solver.solveIK(m_target_pose, m_state.q);
+    auto q_sol = m_solver.solveIK5(m_target_pose, m_state.q);
     m_cmd.q_des = q_sol;
     m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
     m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
@@ -311,7 +311,7 @@ void yandy::Robot::handleStore()
     m_target_pose = STORE_POSE;
     m_cmd.tau_ff = m_solver.computeGravity();
 
-    auto q_sol = m_solver.solveIK(STORE_POSE, m_state.q);
+    auto q_sol = m_solver.solveIK5(STORE_POSE, m_state.q);
     m_cmd.q_des = q_sol;
     m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
     m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);

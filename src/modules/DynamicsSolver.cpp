@@ -125,8 +125,8 @@ namespace yandy::modules
     }
 
 
-    common::VectorJ DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
-                                            const common::VectorJ& q_guess, double tol, int max_iter)
+    common::VectorJ DynamicsSolver::solveIK5(const Eigen::Isometry3d& target_pose,
+                                             const common::VectorJ& q_guess, double tol, int max_iter)
     {
         constexpr int MAX_RETRIES = 3;
         common::VectorJ best_q = q_guess;
@@ -144,12 +144,10 @@ namespace yandy::modules
         {
             // 初始化当前关节角
             common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions(); // 第一次用猜测值，后面用随机值
-            bool success = false;
 
             // 迭代循环
             for (int i = 0; i < max_iter; ++i)
             {
-                constexpr double damping = 1e-3;
                 // 计算正向运动学和关节雅可比
                 pinocchio::computeJointJacobians(m_model, m_data, q);
                 pinocchio::updateFramePlacements(m_model, m_data);
@@ -182,11 +180,45 @@ namespace yandy::modules
                 // 同样要把雅可比矩阵中对应局部 Z 轴旋转的那一行清零
                 // 不要试图通过改变关节来消除绕 Z 轴的旋转
                 J6.row(5).setZero();
-                // 标准的阻尼最小二乘求解 (DLS)
 
-                Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
-                H = J6.transpose() * J6;
-                H.diagonal().array() += damping * damping;
+                // 动态阻尼系数
+                // 误差越大，阻尼越大（防止发散）；误差越小，阻尼越小（加速收敛）
+                constexpr double base_damping = 1e-3;
+                const double adaptive_damping = base_damping + 0.05 * current_err_norm;
+
+                // 加权软限位
+                // 在关节逼近限位时，增加特定关节的对角线惩罚权重
+
+                Eigen::VectorXd w_limit = Eigen::VectorXd::Zero(m_model.nv);
+
+                for (int k = 0; k < m_model.nv; ++k)
+                {
+                    constexpr double max_penalty = 1.0;
+                    constexpr double buffer_ratio = 0.1;
+                    const double q_min = m_model.lowerPositionLimit[k];
+                    const double q_max = m_model.upperPositionLimit[k];
+                    const double q_range = q_max - q_min;
+                    const double q_buffer = q_range * buffer_ratio;
+
+                    if (q[k] > q_max - q_buffer) // 接近上限
+                    {
+                        // 二次函数惩罚：越靠近边缘，惩罚越大
+                        const double penetration = (q[k] - (q_max - q_buffer)) / q_buffer;
+                        w_limit[k] = max_penalty * (penetration * penetration);
+                    }
+                    else if (q[k] < q_min + q_buffer) // 接近下限
+                    {
+                        const double penetration = ((q_min + q_buffer) - q[k]) / q_buffer;
+                        w_limit[k] = max_penalty * (penetration * penetration);
+                    }
+                }
+
+
+                // 标准的阻尼最小二乘求解 (DLS)
+                // 构建 H 矩阵并加入 动态阻尼 和 软限位惩罚
+                Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H = J6.transpose() * J6;
+                // H_ii = J^T J + lambda^2 + w_limit
+                H.diagonal().array() += (adaptive_damping * adaptive_damping) + w_limit.array();
 
                 Eigen::Vector<double, common::JOINT_NUM> g;
                 g = J6.transpose() * err6;
