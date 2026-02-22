@@ -158,7 +158,7 @@ int main()
         // D. 视觉检测到的能量单元
         if (vd.vision_valid)
         {
-            const auto& vp = vd.vision_unit_pose;
+            const auto& vp = vd.vision_unit_pose_base;
             const auto& t = vp.translation();
             const Eigen::Quaterniond q(vp.rotation());
 
@@ -173,7 +173,20 @@ int main()
         // E. 状态文本 (TextDocument 替换式更新，不累加)
         rec.log_static("state", rerun::TextDocument(std::string(format_as(vd.state))));
 
-        const auto t2 = std::chrono::steady_clock::now();
+        // 输出 target 位姿的数值（XYZ + RPY in degrees）
+        {
+            const auto& tp = vd.target_pose;
+            const auto t = tp.translation();
+            const Eigen::Matrix3d R = tp.rotation();
+            Eigen::Vector3d rpy = R.eulerAngles(0, 1, 2); // roll, pitch, yaw (radians)
+            constexpr double rad2deg = 180.0 / M_PI;
+            double roll_deg = rpy[0] * rad2deg;
+            double pitch_deg = rpy[1] * rad2deg;
+            double yaw_deg = rpy[2] * rad2deg;
+
+            diag_logger->info("current target xyz:{:.3f} {:.3f} {:.3f}, rpy:{:.1f} {:.1f} {:.1f}",
+                              t.x(), t.y(), t.z(), roll_deg, pitch_deg, yaw_deg);
+        }
 
         std::this_thread::sleep_until(loop_start + std::chrono::duration<double>(viz_dt));
     }

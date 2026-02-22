@@ -79,6 +79,7 @@ namespace yandy
         common::JointCommand m_cmd{};
         Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
         bool m_is_simulate = false;
+        Eigen::Isometry3d m_sim_cam_pose{Eigen::Isometry3d::Identity()}; // 仿真模式下手持相机的固定位姿 (base_link 系)
 
         // ---- 私有方法 ----
         void visionLoop();

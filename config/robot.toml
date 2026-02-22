@@ -1,1 +1,7 @@
 simulate = true
+
+# 仿真模式下手持相机在 base_link 坐标系中的固定位姿
+# translation: [x, y, z] 单位 m；rpy: [roll, pitch, yaw] 单位 rad，ZYX 顺序
+[simulate_camera]
+translation = [0.4, -0.4, 0.6]
+rpy = [-1.7, 0.0, 0.0]

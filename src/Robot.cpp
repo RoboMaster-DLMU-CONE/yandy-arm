@@ -32,6 +32,28 @@ yandy::Robot::Robot()
     if (m_is_simulate)
     {
         m_logger->info("Simulate mode is on.");
+
+        // 加载手持相机在 base_link 系下的固定位姿
+        auto trans = tbl["simulate_camera"]["translation"].as_array();
+        auto rpy   = tbl["simulate_camera"]["rpy"].as_array();
+
+        Eigen::Vector3d t(
+            trans->get(0)->value<double>().value(),
+            trans->get(1)->value<double>().value(),
+            trans->get(2)->value<double>().value());
+        double roll  = rpy->get(0)->value<double>().value();
+        double pitch = rpy->get(1)->value<double>().value();
+        double yaw   = rpy->get(2)->value<double>().value();
+
+        m_sim_cam_pose = Eigen::Isometry3d::Identity();
+        m_sim_cam_pose.translate(t);
+        m_sim_cam_pose.rotate(
+            Eigen::AngleAxisd(yaw,   Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(roll,  Eigen::Vector3d::UnitX()));
+
+        m_logger->info("Simulate camera pose: t=[{:.3f},{:.3f},{:.3f}] rpy=[{:.3f},{:.3f},{:.3f}]",
+                       t.x(), t.y(), t.z(), roll, pitch, yaw);
     }
 }
 
@@ -130,7 +152,9 @@ void yandy::Robot::start()
             {
                 vd.vision_valid = true;
                 vd.vision_unit_pose = vis->unit_pose;
-                vd.vision_unit_pose_base = m_solver.transformObjectToBase(vis->unit_pose);
+                vd.vision_unit_pose_base = m_is_simulate
+                    ? m_sim_cam_pose * vis->unit_pose
+                    : m_solver.transformObjectToBase(vis->unit_pose);
             }
 
             m_viz_buf.write(vd);
@@ -291,7 +315,8 @@ void yandy::Robot::handleFetching()
     // 将相机坐标系下的位姿转换到基座坐标系
     if (m_is_simulate)
     {
-        m_target_pose = vd->unit_pose;
+        // 仿真模式：相机手持固定，用配置的固定位姿变换 (T_base_cam 不随机械臂运动)
+        m_target_pose = m_sim_cam_pose * vd->unit_pose;
     }
     else
     {

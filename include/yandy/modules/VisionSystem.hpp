@@ -17,7 +17,7 @@ namespace yandy::modules
         float confidence; // 置信度
         int class_id; // 类别
         // 6个关键点: [x, y, conf]
-        // 0:上左, 1:上中, 2:上右, 3:下左, 4:下中, 5:下右
+        // 0:下中, 1:上中, 2:上左, 3:上右, 4:下左, 5:下右
         std::vector<cv::Point3f> keypoints;
     };
 
