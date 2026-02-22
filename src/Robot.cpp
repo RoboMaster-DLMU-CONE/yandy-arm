@@ -270,17 +270,10 @@ void yandy::Robot::handleManual()
 
     // IK 求解
     auto q_sol = m_solver.solveIK(target, m_state.q);
-    if (q_sol.has_value())
-    {
-        m_cmd.q_des = q_sol.value();
-        m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-        m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
-    }
-    else
-    {
-        m_cmd.q_des = m_state.q;
-        m_cmd.v_des.setZero();
-    }
+
+    m_cmd.q_des = q_sol;
+    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
+    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
 }
 
 void yandy::Robot::handleFetching()
@@ -308,17 +301,9 @@ void yandy::Robot::handleFetching()
     m_cmd.tau_ff = m_solver.computeGravity();
 
     auto q_sol = m_solver.solveIK(m_target_pose, m_state.q);
-    if (q_sol.has_value())
-    {
-        m_cmd.q_des = q_sol.value();
-        m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-        m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
-    }
-    else
-    {
-        m_cmd.q_des = m_state.q;
-        m_cmd.v_des.setZero();
-    }
+    m_cmd.q_des = q_sol;
+    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
+    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
 }
 
 void yandy::Robot::handleStore()
@@ -327,15 +312,7 @@ void yandy::Robot::handleStore()
     m_cmd.tau_ff = m_solver.computeGravity();
 
     auto q_sol = m_solver.solveIK(STORE_POSE, m_state.q);
-    if (q_sol.has_value())
-    {
-        m_cmd.q_des = q_sol.value();
-        m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-        m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
-    }
-    else
-    {
-        m_cmd.q_des = m_state.q;
-        m_cmd.v_des.setZero();
-    }
+    m_cmd.q_des = q_sol;
+    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
+    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
 }

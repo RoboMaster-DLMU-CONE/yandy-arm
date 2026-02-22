@@ -50,15 +50,13 @@ namespace yandy::modules
             * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
             * @param tol         位置误差容忍度 (单位: m 或 rad)
             * @param max_iter    最大迭代次数
-            * @param position_only
-            * @return std::optional<VectorJ> 如果收敛返回关节角，否则返回 nullopt
+            * @return VectorJ 返回关节角
             */
-        std::optional<common::VectorJ> solveIK(
+        common::VectorJ solveIK(
             const Eigen::Isometry3d& target_pose,
             const common::VectorJ& q_guess,
             double tol = 1e-4,
-            int max_iter = 100,
-            bool position_only = false
+            int max_iter = 100
         );
 
         // 获取 Pinocchio 模型和数据
@@ -66,6 +64,8 @@ namespace yandy::modules
         pinocchio::Data& getData() { return m_data; }
 
     private:
+        common::VectorJ generateRandomJointPositions();
+
         pinocchio::Model m_model;
         pinocchio::Data m_data;
 

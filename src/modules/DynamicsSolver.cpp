@@ -3,11 +3,14 @@
 #include <pinocchio/algorithm/kinematics.hpp>
 #include <pinocchio/algorithm/rnea.hpp>
 #include <pinocchio/algorithm/frames.hpp>
-#include <pinocchio/algorithm/jacobian.hpp>
+#include <random>
+#include <cmath>
+#include <algorithm>
 
 #include "yandy/core/Logger.hpp"
 
 #define YANDY_URDF_PATH YANDY_CONFIG_PATH "urdf/yandy_urdf.urdf"
+
 
 namespace yandy::modules
 {
@@ -122,106 +125,109 @@ namespace yandy::modules
     }
 
 
-    std::optional<common::VectorJ> DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
-                                                           const common::VectorJ& q_guess, double tol, int max_iter,
-                                                           bool position_only)
+    common::VectorJ DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
+                                            const common::VectorJ& q_guess, double tol, int max_iter)
     {
+        constexpr int MAX_RETRIES = 3;
+        common::VectorJ best_q = q_guess;
+        double min_err = 1e9;
+
         // 转换目标位姿为 Pinocchio 的 SE3 格式
         const pinocchio::SE3 oMdes(target_pose.rotation(), target_pose.translation());
-
-        // 初始化当前关节角
-        common::VectorJ q = q_guess;
-
         // 算法参数
         constexpr double damping = 1e-3; // 阻尼系数 (lambda)，防止奇异点飞车
         constexpr double step_size = 1.0; // 步长，通常设为 1.0
+        // 关节速度增量 (dq)
+        Eigen::VectorXd v(m_model.nv);
 
-        // 临时变量 (定义在栈上以提高速度)
-        Eigen::VectorXd v(m_model.nv); // 关节速度增量 (dq)
-
-        bool success = false;
-
-        // 迭代循环
-        for (int i = 0; i < max_iter; ++i)
+        for (auto restart = 0; restart < MAX_RETRIES; ++restart)
         {
-            // 正运动学 (FK) 更新当前位姿
-            pinocchio::forwardKinematics(m_model, m_data, q);
-            pinocchio::updateFramePlacements(m_model, m_data);
+            // 初始化当前关节角
+            common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions(); // 第一次用猜测值，后面用随机值
+            bool success = false;
 
-            // 获取当前末端位姿
-            const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
-
-            if (position_only)
+            // 迭代循环
+            for (int i = 0; i < max_iter; ++i)
             {
-                // [B] 仅跟踪位置 (世界坐标系)
-                const Eigen::Vector3d err_pos = target_pose.translation() - oMcurr.translation();
-                if (err_pos.norm() < tol)
-                {
-                    success = true;
-                    break;
-                }
+                // 正运动学 (FK) 更新当前位姿
+                pinocchio::forwardKinematics(m_model, m_data, q);
+                pinocchio::updateFramePlacements(m_model, m_data);
 
-                Eigen::Matrix<double, 6, common::JOINT_NUM> J6;
-                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id,
-                                                pinocchio::LOCAL_WORLD_ALIGNED, J6);
-                const Eigen::Matrix<double, 3, common::JOINT_NUM> J = J6.topRows<3>();
+                // 获取当前末端位姿
+                const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
 
-                Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
-                H = J.transpose() * J;
-                H.diagonal().array() += damping * damping;
 
-                Eigen::Vector<double, common::JOINT_NUM> g;
-                g = J.transpose() * err_pos;
-                v = H.llt().solve(g);
-            }
-            else
-            {
-                // [B] 计算误差 (在局部坐标系下的 Twist)
+                // 计算当前位姿和目标位姿之间的 6D 误差 (在末端局部坐标系下)
                 // logic: err = log(oMcurr^{-1} * oMdes)
                 pinocchio::SE3 iMd = oMcurr.actInv(oMdes);
-                Eigen::Matrix<double, 6, 1> err = pinocchio::log6(iMd).toVector();
+                Eigen::Matrix<double, 6, 1> err6 = pinocchio::log6(iMd).toVector();
 
-                if (err.norm() < tol)
+                // 忽略绕局部 Z 轴的旋转误差
+                err6(5) = 0;
+
+                // 判断是否收敛（此时衡量 5D 误差）
+                if (err6.norm() < tol)
                 {
                     success = true;
                     break;
                 }
 
-                Eigen::Matrix<double, 6, common::JOINT_NUM> J;
-                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id, pinocchio::LOCAL, J);
+                // 计算 6D 雅可比矩阵
+                Eigen::Matrix<double, 6, common::JOINT_NUM> J6;
+                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id, pinocchio::LOCAL, J6);
+
+                // 同样要把雅可比矩阵中对应局部 Z 轴旋转的那一行清零
+                // 不要试图通过改变关节来消除绕 Z 轴的旋转
+                J6.row(5).setZero();
+                // 标准的阻尼最小二乘求解 (DLS)
 
                 Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
-                H = J.transpose() * J;
+                H = J6.transpose() * J6;
                 H.diagonal().array() += damping * damping;
 
                 Eigen::Vector<double, common::JOINT_NUM> g;
-                g = J.transpose() * err;
+                g = J6.transpose() * err6;
 
                 v = H.llt().solve(g);
+
+                // 更新关节角
+                // q = q + v * step_size
+                // pinocchio::integrate 处理了欧拉角/四元数等复杂情况，虽然对纯旋转轴简单的加法也可以
+                pinocchio::integrate(m_model, q, v * step_size, q);
+
+                // [G] 关节限位夹钳 (Clamping)
+                // 防止解算出超出物理极限的角度
+                for (int k = 0; k < common::JOINT_NUM; k++)
+                {
+                    // 需要确保 URDF 里 lower/upper 填对了
+                    q[k] = std::max(m_model.lowerPositionLimit[k], std::min(m_model.upperPositionLimit[k], q[k]));
+                }
             }
-
-            // [F] 更新关节角
-            // q = q + v * step_size
-            // pinocchio::integrate 处理了欧拉角/四元数等复杂情况，虽然对纯旋转轴简单的加法也可以
-            pinocchio::integrate(m_model, q, v * step_size, q);
-
-            // [G] 关节限位夹钳 (Clamping)
-            // 防止解算出超出物理极限的角度
-            for (int k = 0; k < common::JOINT_NUM; k++)
-            {
-                // 需要确保 URDF 里 lower/upper 填对了
-                q[k] = std::max(m_model.lowerPositionLimit[k], std::min(m_model.upperPositionLimit[k], q[k]));
-            }
-        }
-
-        if (success)
-        {
-            return q;
         }
 
         // 对于 5 自由度机械臂，求解 6D 目标往往无法完美收敛（success=false）
         // 此时我们返回“最后一次收敛的结果”，让机械臂尽力而为
-        // m_logger->debug("[IK] Failed to converge. Error: {}", err.norm());
+        // m_logger->debug("[IK] Failed to converge. Error: {}", err.norm())
+        return q;
+    }
+
+    common::VectorJ DynamicsSolver::generateRandomJointPositions()
+    {
+        common::VectorJ q;
+        // initialize to zeros (in case JOINT_NUM is large)
+        q.setZero();
+
+        // thread-local RNG to avoid reseeding each call and to be safe in multithreaded contexts
+        thread_local std::mt19937_64 rng{std::random_device{}()};
+
+        for (int i = 0; i < common::JOINT_NUM; ++i)
+        {
+            const double lower = m_model.lowerPositionLimit[i];
+            const double upper = m_model.upperPositionLimit[i];
+            std::uniform_real_distribution<double> dist(lower, upper);
+            q[i] = dist(rng);
+        }
+
         return q;
     }
 }
