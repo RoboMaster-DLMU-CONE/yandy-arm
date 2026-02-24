@@ -48,10 +48,6 @@ state YandyArm {
             ManualControl -> ManualControl : -CMD_TOGGLE_HELD   / toggle_held_flag
             ManualControl -> ManualControl : -CMD_INC_STORE     / inc_storage_count
             ManualControl -> ManualControl : -CMD_DEC_STORE     / dec_storage_count
-
-            ' --- 逻辑检查 ---
-            ' 冲突报错
-            ManualControl --> ManualControl : -CMD_SWITCH_STORE [store_logic_conflict] / log_store_conflict
         }
 
         state FetchingMode {
@@ -72,17 +68,13 @@ state YandyArm {
         ' 进入
         ManualControl --> FetchingMode  : CMD_SWITCH_FETCH / enter_fetch
 
-        ' 退出 - 成功
-        FetchingMode  --> ManualControl : CMD_SWITCH_FETCH [grip_success]  / fetch_success
-        ' 退出 - 失败
-        FetchingMode  --> ManualControl : CMD_SWITCH_FETCH [!grip_success] / fetch_fail
+        ' 退出 (传感器检测在 action 中完成)
+        FetchingMode  --> ManualControl : CMD_SWITCH_FETCH / leave_fetch_mode
 
         ' C. 存取流程 (Switch Store)
-        ' Case A: 去存
-        ManualControl --> StorageMode   : CMD_SWITCH_STORE [has_mineral && can_deposit]   / move_to_deposit
-        ' Case B: 去取
-        ManualControl --> StorageMode   : CMD_SWITCH_STORE [!has_mineral && can_retrieve] / move_to_retrieve
-        ' Case C: 完成并返回
+        ' 进入 (存/取逻辑在 guard+action 中判断)
+        ManualControl --> StorageMode   : CMD_SWITCH_STORE [can_enter_store] / enter_store_mode
+        ' 完成并返回
         StorageMode   --> ManualControl : CMD_SWITCH_STORE / store_finish
     }
 

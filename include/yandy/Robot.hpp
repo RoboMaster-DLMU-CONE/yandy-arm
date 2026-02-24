@@ -54,7 +54,7 @@ namespace yandy
         static constexpr double DT = 0.004; // 250Hz
 
         // 存储模式预设位姿 (基座坐标系)
-        static const Eigen::Isometry3d STORE_POSE;
+        Eigen::Isometry3d m_store_pose[2];
 
         // ---- Modules ----
         modules::ArmHW m_arm_hw;

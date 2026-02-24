@@ -61,67 +61,54 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             fsm.m_logger->info("启动视觉抓取流程...");
-            // fsm.hardware_move("视觉识别坐标");
-            // fsm.hardware_grip(true); // 张开
             fsm.m_logger->info("[提示] 请操作摇杆微调位置，再次发送指令以抓取。");
         }
     };
 
     template <>
-    struct Action<by_name("fetch_success")>
+    struct Action<by_name("leave_fetch_mode")>
     {
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            // fsm.hardware_grip(false); // 闭合
-            fsm.mineral_attached = true;
-            // fsm.hardware_move("FETCH_READY_POS");
-            fsm.m_logger->info("抓取成功！已返回原位");
-        }
-    };
-
-    template <>
-    struct Action<by_name("fetch_fail")>
-    {
-        template <class EVT, class FSM, class S, class T>
-        void operator()(EVT const&, FSM& fsm, S&, T&)
-        {
-            // fsm.hardware_grip(false); // 闭合
-            fsm.mineral_attached = false;
-            // fsm.hardware_move("FETCH_READY_POS");
-            fsm.m_logger->warn("传感器未检测到物体！抓取失败，已返回。");
+            // TODO: replace with fsm.check_grip_sensor()
+            bool success = true;
+            if (success)
+            {
+                fsm.mineral_attached = true;
+                fsm.m_logger->info("抓取成功！已返回原位");
+            }
+            else
+            {
+                fsm.mineral_attached = false;
+                fsm.m_logger->warn("传感器未检测到物体！抓取失败，已返回。");
+            }
         }
     };
 
     // --- Store 流程 ---
 
     template <>
-    struct Action<by_name("move_to_deposit")>
+    struct Action<by_name("enter_store_mode")>
     {
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            fsm.m_logger->info("准备存矿...");
-            // fsm.hardware_move("STORAGE_BIN_POS");
-            fsm.m_logger->info("[提示] 请微调位置，再次发送指令以放置。");
+            if (fsm.mineral_attached)
+            {
+                fsm.m_logger->info("准备存矿...");
+                fsm.m_logger->info("[提示] 请微调位置，再次发送指令以放置。");
+            }
+            else
+            {
+                fsm.m_logger->info("准备取矿...");
+                fsm.m_logger->info("[提示] 请微调位置，再次发送指令以抓取。");
+            }
         }
     };
 
     template <>
-    struct Action<by_name("move_to_retrieve")>
-    {
-        template <class EVT, class FSM, class S, class T>
-        void operator()(EVT const&, FSM& fsm, S&, T&)
-        {
-            fsm.m_logger->info("准备取矿...");
-            // fsm.hardware_move("STORAGE_BIN_POS");
-            // fsm.hardware_grip(true); // 张开准备取
-            fsm.m_logger->info("[提示] 请微调位置，再次发送指令以抓取。");
-        }
-    };
-
-    template <>
-    struct Action<by_name("action_store_finish")>
+    struct Action<by_name("store_finish")>
     {
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
@@ -266,38 +253,25 @@ namespace boost::msm::front::puml
         }
     };
 
-    // 检查逻辑冲突
+    // 检查能否进入存取模式 (合并逻辑冲突+存取判断)
     template <>
-    struct Guard<by_name("store_logic_conflict")>
+    struct Guard<by_name("can_enter_store")>
     {
         template <class EVT, class FSM, class S, class T>
         bool operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            // 冲突定义：(有矿 但 满了) 或 (没矿 但 空了)
-            if (fsm.mineral_attached && fsm.stored_count >= 2) return true;
-            if (!fsm.mineral_attached && fsm.stored_count <= 0) return true;
-            return false;
-        }
-    };
-
-    // Fallback for combined guards if parser doesn't split them
-    template <>
-    struct Guard<by_name("has_mineral && can_deposit")>
-    {
-        template <class EVT, class FSM, class S, class T>
-        bool operator()(EVT const&, FSM& fsm, S&, T&)
-        {
-            return fsm.mineral_attached && (fsm.stored_count < 2);
-        }
-    };
-
-    template <>
-    struct Guard<by_name("!has_mineral && can_retrieve")>
-    {
-        template <class EVT, class FSM, class S, class T>
-        bool operator()(EVT const&, FSM& fsm, S&, T&)
-        {
-            return !fsm.mineral_attached && (fsm.stored_count > 0);
+            // 冲突: 有矿但仓库满 / 没矿但仓库空
+            if (fsm.mineral_attached && fsm.stored_count >= 2)
+            {
+                fsm.m_logger->error("逻辑冲突！手持状态与库存状态不匹配，无法执行。");
+                return false;
+            }
+            if (!fsm.mineral_attached && fsm.stored_count <= 0)
+            {
+                fsm.m_logger->error("逻辑冲突！手持状态与库存状态不匹配，无法执行。");
+                return false;
+            }
+            return true;
         }
     };
 }
@@ -321,7 +295,7 @@ namespace yandy::modules
             BOOST_MSM_PUML_DECLARE_TABLE(YANDY_ARM_PUML_CONTENT);
 
             template <class FSM, class Event>
-            void no_transition(Event const&, FSM&, int)
+            void no_transition(Event const&, FSM& fsm, int)
             {
                 m_logger->warn("当前状态不支持此指令");
             }

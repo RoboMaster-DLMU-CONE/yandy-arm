@@ -24,4 +24,8 @@ int main()
     fsm.logState();
     fsm.processCmd(CMD_SWITCH_FETCH);
     fsm.logState();
+    fsm.processCmd(CMD_SWITCH_STORE);
+    fsm.logState();
+    fsm.processCmd(CMD_SWITCH_STORE);
+    fsm.logState();
 }

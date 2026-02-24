@@ -173,7 +173,7 @@ int main()
         // E. 状态文本 (TextDocument 替换式更新，不累加)
         rec.log_static("state", rerun::TextDocument(std::string(format_as(vd.state))));
 
-        // 输出 target 位姿的数值（XYZ + RPY in degrees）
+        // 输出 target 位姿的数值（XYZ + RPY in degrees） 调试用
         {
             const auto& tp = vd.target_pose;
             const auto t = tp.translation();
