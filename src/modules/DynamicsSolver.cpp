@@ -157,6 +157,9 @@ namespace yandy::modules
         // 关节速度增量 (dq)
         Eigen::VectorXd v(m_model.nv);
 
+        // 宽容误差阈值。如果第一轮猜测求解后误差小于此值，即使未达 tol 也不触发随机重启
+        // 防止机械臂在极限位置追踪时发生剧烈抽搐
+
         for (auto restart = 0; restart < MAX_RETRIES; ++restart)
         {
             // 初始化当前关节角
@@ -191,12 +194,32 @@ namespace yandy::modules
                 }
 
                 // 计算 6D 雅可比矩阵
-                Eigen::Matrix<double, 6, common::JOINT_NUM> J6;
-                pinocchio::computeFrameJacobian(m_model, m_data, q, m_tcp_frame_id, pinocchio::LOCAL, J6);
+                Eigen::Matrix<double, 6, common::JOINT_NUM> J6(6, m_model.nv);
+                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J6);
 
                 // 同样要把雅可比矩阵中对应局部 Z 轴旋转的那一行清零
                 // 不要试图通过改变关节来消除绕 Z 轴的旋转
                 J6.row(5).setZero();
+
+                // [基于雅可比列清零的限位防抖 (Active Set 思想)
+                // 先计算原始梯度方向 (g_raw > 0 表示该关节想要增加角度以减小误差)
+                Eigen::VectorXd g_raw = J6.transpose() * err6;
+
+                for (int k = 0; k < m_model.nv; ++k)
+                {
+                    constexpr double limit_epsilon = 1e-3;
+                    const bool hit_upper = (q[k] >= m_model.upperPositionLimit[k] - limit_epsilon);
+                    const bool hit_lower = (q[k] <= m_model.lowerPositionLimit[k] + limit_epsilon);
+
+                    // 如果碰到上限且想继续往上，或者碰到下限且想继续往下
+                    if ((hit_upper && g_raw[k] > 0) || (hit_lower && g_raw[k] < 0))
+                    {
+                        // 彻底切断该关节的动力：将该列雅可比清零 (假装该关节不可动)
+                        J6.col(k).setZero();
+                    }
+                }
+
+                // 重新使用处理过后的 J6 构建 DLS 矩阵
 
                 // 动态阻尼系数
                 // 误差越大，阻尼越大（防止发散）；误差越小，阻尼越小（加速收敛）
@@ -243,6 +266,14 @@ namespace yandy::modules
                 // 求解关节速度增量
                 v = H.llt().solve(g);
 
+                // 早停机制 (Early Stopping)
+                // 如果算出来的速度极小，说明已经卡在某个局部最优或者极限边界上了
+                // 继续迭代毫无意义，只会产生微小的数值抖动，直接退出当前重试循环
+                if (v.norm() < 1e-4)
+                {
+                    break;
+                }
+
                 // 步长限制，防止奇异点附近发散
                 if (constexpr double max_step = 0.5; v.norm() > max_step)
                 {
@@ -258,11 +289,16 @@ namespace yandy::modules
                 // 防止解算出超出物理极限的角度
                 q = q.cwiseMax(m_model.lowerPositionLimit).cwiseMin(m_model.upperPositionLimit);
             }
+            // 防止跨帧抖动
+            // 如果第一轮（猜测值）虽然没达到完美的 tol，但是误差在可接受范围内
+            // 说明已经尽力靠在极限边缘了，直接返回，不再盲目尝试随机重启
+            if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol)
+            {
+                return best_q;
+            }
         }
 
-        // 对于 5 自由度机械臂，求解 6D 目标往往无法完美收敛（success=false）
-        // 此时我们返回“最后一次收敛的结果”，让机械臂尽力而为
-        // m_logger->debug("[IK] Failed to converge. Error: {}", err.norm())
+        // 对于 5 自由度机械臂，求解 6D 目标往往无法完美收敛
         return best_q;
     }
 
