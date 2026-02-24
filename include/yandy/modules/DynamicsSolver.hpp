@@ -5,7 +5,6 @@
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/multibody/data.hpp>
 #include <spdlog/spdlog.h>
-#include <optional>
 
 namespace yandy::modules
 {
@@ -37,11 +36,13 @@ namespace yandy::modules
 
         // 获取相机光心相对于基座的位姿
         // 调用前必须先调用 updateKinematics(q, v)
-        Eigen::Isometry3d getCameraPose();
+        Eigen::Isometry3d getCameraPose() const;
+
+        Eigen::Isometry3d getStoreFrame(size_t index) const;
 
         // 将 PnP 结果转换到基座坐标系
         // T_cam_obj: PnP 算出来的 (物体在相机系)
-        Eigen::Isometry3d transformObjectToBase(const Eigen::Isometry3d& T_cam_obj);
+        Eigen::Isometry3d transformObjectToBase(const Eigen::Isometry3d& T_cam_obj) const;
 
         /**
             * @brief 数值法逆运动学求解 (专为5dof优化)
@@ -74,7 +75,10 @@ namespace yandy::modules
 
         pinocchio::JointIndex m_ee_joint_id{static_cast<pinocchio::JointIndex>(-1)}; // 末端关节在 Pinocchio 模型中的索引
         pinocchio::FrameIndex m_tcp_frame_id{static_cast<pinocchio::FrameIndex>(-1)};
-        pinocchio::FrameIndex camera_frame_id_{static_cast<pinocchio::FrameIndex>(-1)};
+        pinocchio::FrameIndex m_camera_frame_id{static_cast<pinocchio::FrameIndex>(-1)};
+        pinocchio::FrameIndex m_store_frames[2]{
+            static_cast<pinocchio::FrameIndex>(-1), static_cast<pinocchio::FrameIndex>(-1)
+        };
 
         // 预分配外力容器，避免实时分配内存
         pinocchio::container::aligned_vector<pinocchio::Force> f_ext_;

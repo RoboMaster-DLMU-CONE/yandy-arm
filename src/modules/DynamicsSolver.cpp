@@ -48,13 +48,25 @@ namespace yandy::modules
         }
         if (m_model.existFrame("camera_optical_frame"))
         {
-            camera_frame_id_ = m_model.getFrameId("camera_optical_frame");
+            m_camera_frame_id = m_model.getFrameId("camera_optical_frame");
         }
         else
         {
             m_logger->error("No valid camera-optical frame found.");
             throw std::runtime_error("No valid camera-optical frame found");
         }
+        // loading store frames
+        if (m_model.existFrame("store_frame_1") && m_model.existFrame("store_frame_2"))
+        {
+            m_store_frames[0] = m_model.getFrameId("store_frame_1");
+            m_store_frames[1] = m_model.getFrameId("store_frame_2");
+        }
+        else
+        {
+            m_logger->error("No valid store frames found.");
+            throw std::runtime_error("No valid store frames found");
+        }
+
 
         f_ext_.resize(m_model.njoints, pinocchio::Force::Zero());
 
@@ -112,12 +124,17 @@ namespace yandy::modules
         return pose;
     }
 
-    Eigen::Isometry3d DynamicsSolver::getCameraPose()
+    Eigen::Isometry3d DynamicsSolver::getCameraPose() const
     {
-        return Eigen::Isometry3d(m_data.oMf[camera_frame_id_].toHomogeneousMatrix());
+        return Eigen::Isometry3d(m_data.oMf[m_camera_frame_id].toHomogeneousMatrix());
     }
 
-    Eigen::Isometry3d DynamicsSolver::transformObjectToBase(const Eigen::Isometry3d& T_cam_obj)
+    Eigen::Isometry3d DynamicsSolver::getStoreFrame(const size_t index) const
+    {
+        return Eigen::Isometry3d(m_data.oMf[m_store_frames[index]].toHomogeneousMatrix());
+    }
+
+    Eigen::Isometry3d DynamicsSolver::transformObjectToBase(const Eigen::Isometry3d& T_cam_obj) const
     {
         // T_base_cam: 此时刻相机的位姿 (由 getCameraPose 算出)
         const Eigen::Isometry3d T_base_cam = getCameraPose();

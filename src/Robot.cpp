@@ -5,14 +5,6 @@
 
 #define YANDY_ROBOT_CONFIG YANDY_CONFIG_PATH "robot.toml"
 
-// 存储模式预设位姿 (基座坐标系) — 后续可改为从 config 加载
-// TODO: 根据实际机械臂工作空间调整此位姿
-const Eigen::Isometry3d yandy::Robot::STORE_POSE = []
-{
-    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-    pose.pretranslate(Eigen::Vector3d(0.15, 0.0, 0.35));
-    return pose;
-}();
 
 // ============================================================
 // 构造 / 析构
@@ -35,22 +27,22 @@ yandy::Robot::Robot()
 
         // 加载手持相机在 base_link 系下的固定位姿
         auto trans = tbl["simulate_camera"]["translation"].as_array();
-        auto rpy   = tbl["simulate_camera"]["rpy"].as_array();
+        auto rpy = tbl["simulate_camera"]["rpy"].as_array();
 
         Eigen::Vector3d t(
             trans->get(0)->value<double>().value(),
             trans->get(1)->value<double>().value(),
             trans->get(2)->value<double>().value());
-        double roll  = rpy->get(0)->value<double>().value();
+        double roll = rpy->get(0)->value<double>().value();
         double pitch = rpy->get(1)->value<double>().value();
-        double yaw   = rpy->get(2)->value<double>().value();
+        double yaw = rpy->get(2)->value<double>().value();
 
         m_sim_cam_pose = Eigen::Isometry3d::Identity();
         m_sim_cam_pose.translate(t);
         m_sim_cam_pose.rotate(
-            Eigen::AngleAxisd(yaw,   Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
             Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
-            Eigen::AngleAxisd(roll,  Eigen::Vector3d::UnitX()));
+            Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()));
 
         m_logger->info("Simulate camera pose: t=[{:.3f},{:.3f},{:.3f}] rpy=[{:.3f},{:.3f},{:.3f}]",
                        t.x(), t.y(), t.z(), roll, pitch, yaw);
@@ -89,6 +81,12 @@ void yandy::Robot::start()
     m_cmd.tau_ff = m_solver.computeGravity();
     m_cmd.kp.fill(20.0);
     m_cmd.kd.fill(1.0);
+
+    // 读取当前 store 关节位置
+    for (size_t i = 0; i < 2; ++i)
+    {
+        m_store_pose[i] = m_solver.getStoreFrame(i);
+    }
 
     m_logger->info("Entering main control loop at {}Hz.", static_cast<int>(1.0 / DT));
 
@@ -153,8 +151,8 @@ void yandy::Robot::start()
                 vd.vision_valid = true;
                 vd.vision_unit_pose = vis->unit_pose;
                 vd.vision_unit_pose_base = m_is_simulate
-                    ? m_sim_cam_pose * vis->unit_pose
-                    : m_solver.transformObjectToBase(vis->unit_pose);
+                                               ? m_sim_cam_pose * vis->unit_pose
+                                               : m_solver.transformObjectToBase(vis->unit_pose);
             }
 
             m_viz_buf.write(vd);
@@ -333,10 +331,11 @@ void yandy::Robot::handleFetching()
 
 void yandy::Robot::handleStore()
 {
-    m_target_pose = STORE_POSE;
+    // TODO: switch pose from the variable from fsm
+    m_target_pose = m_store_pose[0];
     m_cmd.tau_ff = m_solver.computeGravity();
 
-    auto q_sol = m_solver.solveIK5(STORE_POSE, m_state.q);
+    auto q_sol = m_solver.solveIK5(m_store_pose[0], m_state.q);
     m_cmd.q_des = q_sol;
     m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
     m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
