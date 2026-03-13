@@ -49,7 +49,7 @@ Stephen Brawner (brawner@gmail.com)
   <joint name="store_joint_1" type="fixed">
     <parent link="base_link" />
     <child link="store_frame_1" />
-    <origin xyz="-0.20 0.22 0.43" rpy="0 0 0" />
+    <origin xyz="-0.25 0.25 0.45" rpy="0 0 0" />
   </joint>
   <link name="store_frame_1">
     <mass value="0.001" />
@@ -60,7 +60,7 @@ Stephen Brawner (brawner@gmail.com)
   <joint name="store_joint_2" type="fixed">
     <parent link="base_link" />
     <child link="store_frame_2" />
-    <origin xyz="-0.20 -0.27 0.43" rpy="0 0 0" />
+    <origin xyz="-0.25 -0.25 0.45" rpy="0 0 0" />
   </joint>
   <link name="store_frame_2">
     <mass value="0.001" />
@@ -112,14 +112,14 @@ Stephen Brawner (brawner@gmail.com)
     name="joint_1"
     type="revolute">
     <origin
-      xyz="0.0476510115539754 -0.0233859859702091 0.11487414900293"
+      xyz="-2.5649E-05 -1.7585E-05 0.1128"
       rpy="0 0 0" />
     <parent
       link="base_link" />
     <child
       link="link_1" />
     <axis
-      xyz="0 0 1" />
+      xyz="0 0 -1" />
     <limit
       lower="-2.4"
       upper="2.4"
@@ -170,8 +170,8 @@ Stephen Brawner (brawner@gmail.com)
     name="joint_2"
     type="revolute">
     <origin
-      xyz="0 -0.0342999999999993 0.0899999999999964"
-      rpy="1.5707963267949 0 3.14159265358979" />
+      xyz="0 -0.0343 0.114"
+      rpy="1.5708 0 -3.1416" />
     <parent
       link="link_1" />
     <child
@@ -228,8 +228,8 @@ Stephen Brawner (brawner@gmail.com)
     name="joint_3"
     type="revolute">
     <origin
-      xyz="0.246201938253051 0.043412044416735 0.0723000000000015"
-      rpy="3.14159265358979 0 -3.14159265358979" />
+      xyz="0.2462 0.043412 0.0723"
+      rpy="3.1416 0 3.1416" />
     <parent
       link="link_2" />
     <child
@@ -300,14 +300,14 @@ Stephen Brawner (brawner@gmail.com)
     name="joint_4"
     type="revolute">
     <origin
-      xyz="0.142524819154464 0.158289847826683 0.037999999999854"
-      rpy="-1.57079632679561 0 -0.733038285837583" />
+      xyz="0.13717 0.15234 0.038"
+      rpy="-1.5708 0 -0.73304" />
     <parent
       link="link_3" />
     <child
       link="link_4" />
     <axis
-      xyz="0 0 1" />
+      xyz="0 0 -1" />
     <limit
       lower="-6.28"
       upper="6.28"
@@ -358,8 +358,8 @@ Stephen Brawner (brawner@gmail.com)
     name="joint_5"
     type="revolute">
     <origin
-      xyz="0 0.034000000000019 0.0599999999999983"
-      rpy="1.5707963267949 0 0" />
+      xyz="0 0.021 0.068"
+      rpy="1.5708 0 0" />
     <parent
       link="link_4" />
     <child
@@ -372,6 +372,64 @@ Stephen Brawner (brawner@gmail.com)
       effort="50"
       velocity="8" />
   </joint>
+  <link
+    name="link_6">
+    <inertial>
+      <origin
+        xyz="0.014302215240411 -0.0576306571357226 -0.0232936504987501"
+        rpy="0 0 0" />
+      <mass
+        value="0.452418521071107" />
+      <inertia
+        ixx="0.000130209544601984"
+        ixy="-1.06109516274456E-10"
+        ixz="-5.29761390523097E-05"
+        iyy="0.000291789363663892"
+        iyz="1.0690996894176E-09"
+        izz="0.000222984319140339" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/link_6.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/link_6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint_6"
+    type="revolute">
+    <origin
+      xyz="0.052 0 0.021"
+      rpy="0 1.5708 0" />
+    <parent
+      link="link_5" />
+    <child
+      link="link_6" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-6.28"
+      upper="6.28"
+      effort="50"
+      velocity="8" />
+  </joint>
   <link name="gripper_tcp">
     <inertial>
       <mass value="0.001" />
@@ -379,8 +437,8 @@ Stephen Brawner (brawner@gmail.com)
       <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
     </inertial>
   </link>
-  <joint name="joint_tcp" type="fixed">
-    <parent link="link_5" />
+  <joint name="joint_tcp" type="revolute">
+    <parent link="link_6" />
     <child link="gripper_tcp" />
     <origin xyz="0.2 0 0.035" rpy="0 0 0" />
     <limit
