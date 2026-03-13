@@ -28,9 +28,14 @@ namespace yandy::modules
             throw;
         }
         m_data = pinocchio::Data(m_model);
-        if (m_model.existJointName("joint_5"))
+        if (m_model.existJointName("joint_6"))
         {
-            m_ee_joint_id = m_model.getJointId("joint_5");
+            m_ee_joint_id = m_model.getJointId("joint_6");
+        }
+        else if (m_model.existJointName("joint_5"))
+        {
+             m_logger->warn("joint_6 not found, falling back to joint_5");
+             m_ee_joint_id = m_model.getJointId("joint_5");
         }
         else
         {
@@ -142,7 +147,7 @@ namespace yandy::modules
     }
 
 
-    common::VectorJ DynamicsSolver::solveIK5(const Eigen::Isometry3d& target_pose,
+    common::VectorJ DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
                                              const common::VectorJ& q_guess, double tol, int max_iter)
     {
         constexpr int MAX_RETRIES = 3;
@@ -177,8 +182,7 @@ namespace yandy::modules
                 pinocchio::SE3 iMd = oMcurr.actInv(oMdes);
                 Eigen::Matrix<double, 6, 1> err6 = pinocchio::log6(iMd).toVector();
 
-                // 忽略绕局部 Z 轴的旋转误差
-                err6(5) = 0;
+                // 6 DOF, utilize full error vector
 
                 const double current_err_norm = err6.norm();
                 if (current_err_norm < min_err)
@@ -187,7 +191,7 @@ namespace yandy::modules
                     best_q = q; // 保存历史上误差最小的一组解
                 }
 
-                // 判断是否收敛（此时衡量 5D 误差）
+                // 判断是否收敛（此时衡量 6D 误差）
                 if (current_err_norm < tol)
                 {
                     return q;
@@ -197,9 +201,7 @@ namespace yandy::modules
                 Eigen::Matrix<double, 6, common::JOINT_NUM> J6(6, m_model.nv);
                 pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J6);
 
-                // 同样要把雅可比矩阵中对应局部 Z 轴旋转的那一行清零
-                // 不要试图通过改变关节来消除绕 Z 轴的旋转
-                J6.row(5).setZero();
+                // 6 DOF, utilize full Jacobian
 
                 // [基于雅可比列清零的限位防抖 (Active Set 思想)
                 // 先计算原始梯度方向 (g_raw > 0 表示该关节想要增加角度以减小误差)
@@ -298,7 +300,7 @@ namespace yandy::modules
             }
         }
 
-        // 对于 5 自由度机械臂，求解 6D 目标往往无法完美收敛
+        // 6 自由度机械臂，期望完美收敛
         return best_q;
     }
 

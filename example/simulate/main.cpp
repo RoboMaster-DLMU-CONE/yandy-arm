@@ -184,7 +184,7 @@ int main()
             double pitch_deg = rpy[1] * rad2deg;
             double yaw_deg = rpy[2] * rad2deg;
 
-            diag_logger->info("current target xyz:{:.3f} {:.3f} {:.3f}, rpy:{:.1f} {:.1f} {:.1f}",
+            diag_logger->debug("current target xyz:{:.3f} {:.3f} {:.3f}, rpy:{:.1f} {:.1f} {:.1f}",
                               t.x(), t.y(), t.z(), roll_deg, pitch_deg, yaw_deg);
         }
 

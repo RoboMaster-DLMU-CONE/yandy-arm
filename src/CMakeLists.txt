@@ -13,9 +13,9 @@ target_link_libraries(yandy_arm_arm_hw
         PUBLIC
         yandy_arm_logger
         yandy_arm_types
-        OneMotor::OneMotor
         pinocchio::pinocchio
         tomlplusplus::tomlplusplus
+        OneMotor::OneMotor
 )
 
 add_library(yandy_arm_effector SHARED modules/Effector.cpp)

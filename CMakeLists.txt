@@ -14,6 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_definitions(YANDY_CONFIG_PATH="${PROJECT_SOURCE_DIR}/config/")
 
 include(FindModules)
+
 add_subdirectory(src)
 
 if (YANDY_BUILD_EXAMPLES)

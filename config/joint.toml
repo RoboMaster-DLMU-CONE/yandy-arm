@@ -34,3 +34,9 @@ master_id = 0x15
 offset = 0.0
 dir = 1.0
 mit_pid = { kp = 200.0, kd = 6.0 }
+
+[joint_6]
+id = 6
+offset = 0.0
+dir = 1.0
+mit_pid = { kp = 200.0, kd = 6.0 }

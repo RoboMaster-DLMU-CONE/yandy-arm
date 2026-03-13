@@ -4,6 +4,8 @@
 #include <one/motor/dm/DmMotor.hpp>
 #include <one/motor/dji/DjiMotor.hpp>
 #include <one/can/CanDriver.hpp>
+#include <one/PID/PidController.hpp>
+
 #include <toml++/toml.hpp>
 
 // Simulation Includes
@@ -19,20 +21,21 @@ using one::pid::PidChain;
 using namespace one::motor;
 using dji::GM6020_Voltage;
 using dji::M3508;
+using dji::M2006;
 using dm::J4310;
 using dm::J4340;
 using dm::J8009;
 using dm::J10010L;
 using one::can::CanDriver;
-using std::make_unique;
-
 using namespace one::motor::units::literals;
+
+using std::make_unique;
 
 #define JOINT_CONFIG_PATH YANDY_CONFIG_PATH "joint.toml"
 
 namespace yandy::modules
 {
-    namespace
+    namespace detail
     {
         // ---------------------------------------------------------------------
         // RealArmHW Implementation
@@ -40,9 +43,10 @@ namespace yandy::modules
         class RealArmHW : public IArmHW
         {
         public:
-            explicit RealArmHW(one::can::CanDriver& driver) : m_driver(driver)
+            explicit RealArmHW(std::string_view can_port)
             {
                 m_logger = core::create_logger("RealArmHW", spdlog::level::info);
+                m_driver = std::make_unique<one::can::CanDriver>(std::string(can_port));
                 parse_config();
             }
 
@@ -137,8 +141,9 @@ namespace yandy::modules
                 parse_dm_motor(tbl["joint_1"], 0);
                 parse_dm_motor(tbl["joint_2"], 1);
                 parse_dm_motor(tbl["joint_3"], 2);
-                parse_dji_motor(tbl["joint_4"], 3);
+                parse_gm6020_motor(tbl["joint_4"], 3);
                 parse_dm_motor(tbl["joint_5"], 4);
+                parse_m2006_motor(tbl["joint_6"], 5);
             }
 
             void parse_dm_motor(const toml::v3::node_view<toml::v3::node> joint_node, const size_t joint_index)
@@ -157,23 +162,23 @@ namespace yandy::modules
                 case 0:
                     // J1 : 4340
                     m_motors[joint_index] = std::make_unique<
-                        J4340>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J4340>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 case 1:
                     // J2 : 10010L
-                    m_motors[joint_index] = std::make_unique<J10010L>(m_driver, dm::Param{
+                    m_motors[joint_index] = std::make_unique<J10010L>(*m_driver, dm::Param{
                                                                           can_id, master_id, dm::MITMode{kp, kd}
                                                                       });
                     break;
                 case 2:
                     // J3 : 8009
                     m_motors[joint_index] = std::make_unique<
-                        J8009>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J8009>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 case 4:
                     // J5 : 4310
                     m_motors[joint_index] = std::make_unique<
-                        J4310>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J4310>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 default: ;
                 }
@@ -183,7 +188,7 @@ namespace yandy::modules
                     m_dirs[joint_index], m_offsets[joint_index], kp, kd);
             }
 
-            void parse_dji_motor(toml::v3::node_view<toml::v3::node> joint_node, size_t joint_index)
+            void parse_gm6020_motor(toml::v3::node_view<toml::v3::node> joint_node, size_t joint_index)
             {
                 float kp{}, kd{};
                 const uint8_t id = joint_node["id"].value<uint8_t>().value();
@@ -193,22 +198,40 @@ namespace yandy::modules
                 kd = joint_node["mit_pid"]["kd"].value<float>().value();
 
                 m_motors[joint_index] = std::make_unique<
-                    GM6020_Voltage>(m_driver, dji::Param{id, dji::MITMode{kp, kd}});
+                    GM6020_Voltage>(*m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
                 m_logger->info(
-                    "J{} DJI motor parsed: dir: {}, offset: {}",
+                    "J{} GM6020 motor parsed: dir: {}, offset: {}",
                     joint_index + 1, m_dirs[joint_index], m_offsets[joint_index]);
             }
 
-            one::can::CanDriver& m_driver;
-            std::array<std::unique_ptr<IMotor>, 5> m_motors;
-            std::array<float, 5> m_dirs{};
-            std::array<float, 5> m_offsets{};
+            void parse_m2006_motor(toml::v3::node_view<toml::v3::node> joint_node, size_t joint_index)
+            {
+                float kp{}, kd{};
+                const uint8_t id = joint_node["id"].value<uint8_t>().value();
+                m_dirs[joint_index] = joint_node["dir"].value<float>().value();
+                m_offsets[joint_index] = joint_node["offset"].value<float>().value();
+                kp = joint_node["mit_pid"]["kp"].value<float>().value();
+                kd = joint_node["mit_pid"]["kd"].value<float>().value();
+
+                m_motors[joint_index] = std::make_unique<
+                    M2006>(*m_driver, dji::Param{id, dji::MITMode{kp, kd}});
+
+                m_logger->info(
+                    "J{} M2006 motor parsed: dir: {}, offset: {}",
+                    joint_index + 1, m_dirs[joint_index], m_offsets[joint_index]);
+            }
+
+            std::unique_ptr<one::can::CanDriver> m_driver;
+            std::array<std::unique_ptr<IMotor>, common::JOINT_NUM> m_motors;
+            std::array<float, common::JOINT_NUM> m_dirs{};
+            std::array<float, common::JOINT_NUM> m_offsets{};
             std::shared_ptr<spdlog::logger> m_logger;
         };
 
         // ---------------------------------------------------------------------
         // FakeArmHW Implementation
+
         // ---------------------------------------------------------------------
         class FakeArmHW : public IArmHW
         {
@@ -227,7 +250,7 @@ namespace yandy::modules
                 m_state.tau = common::VectorJ::Zero();
 
                 // 初始姿态：避开奇异点，同时落在关节限位内
-                m_state.q << 0.0, 0.6, 1.5, 0.0, 0.8;
+                m_state.q << 0.0, 0.6, 1.5, 0.0, 0.8, 0.0;
 
                 // 初始化 last_cmd，避免第一帧飞车
                 m_last_cmd.q_des = m_state.q;
@@ -303,15 +326,16 @@ namespace yandy::modules
         if (simulate)
         {
             logger->info("Simulation mode detected. Creating FakeArmHW...");
-            m_impl = std::make_unique<FakeArmHW>();
+            m_impl = std::make_unique<detail::FakeArmHW>();
         }
         else
         {
             logger->info("Real hardware mode detected. Creating RealArmHW...");
-            m_can_driver = std::make_unique<CanDriver>(can_port);
-            m_impl = std::make_unique<RealArmHW>(*m_can_driver.get());
+            m_impl = std::make_unique<detail::RealArmHW>(can_port);
         }
     }
+
+    ArmHW::~ArmHW() = default;
 
     void ArmHW::read(common::JointState& state)
     {

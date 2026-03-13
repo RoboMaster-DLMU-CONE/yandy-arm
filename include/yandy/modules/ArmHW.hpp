@@ -2,7 +2,6 @@
 #define YANDY_ARM_ARM_HPP
 
 #include <memory>
-#include <one/can/CanDriver.hpp>
 #include <yandy/common/Types.hpp>
 #include "IArmHW.hpp"
 
@@ -12,6 +11,7 @@ namespace yandy::modules
     {
     public:
         ArmHW();
+        ~ArmHW();
 
         void read(common::JointState& state);
         void write(const common::JointCommand& cmd);
@@ -23,7 +23,6 @@ namespace yandy::modules
 
     private:
         std::unique_ptr<IArmHW> m_impl;
-        std::unique_ptr<one::can::CanDriver> m_can_driver;
     };
 }
 
