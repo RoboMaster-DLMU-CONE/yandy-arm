@@ -5,6 +5,8 @@
 #include <boost/msm/front/puml/puml.hpp>
 #include <boost/msm/back11/state_machine.hpp>
 
+#include <functional>
+
 #include <yandy/core/Logger.hpp>
 #include <fsm_puml.h>
 #include <iostream>
@@ -20,6 +22,7 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             fsm.m_logger->info("系统已启用，进入手动控制模式");
+            if (fsm.callbacks.on_enable) fsm.callbacks.on_enable();
         }
     };
 
@@ -30,6 +33,7 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             fsm.m_logger->info("系统已禁用");
+            if (fsm.callbacks.on_disable) fsm.callbacks.on_disable();
         }
     };
 
@@ -40,6 +44,8 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             fsm.m_logger->info("!!! 急停触发 !!!");
+            if (fsm.callbacks.on_brake) fsm.callbacks.on_brake();
+            if (fsm.callbacks.on_disable) fsm.callbacks.on_disable();
         }
     };
 
@@ -62,6 +68,7 @@ namespace boost::msm::front::puml
         {
             fsm.m_logger->info("启动视觉抓取流程...");
             fsm.m_logger->info("[提示] 请操作摇杆微调位置，再次发送指令以抓取。");
+            if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
         }
     };
 
@@ -77,6 +84,7 @@ namespace boost::msm::front::puml
             {
                 fsm.mineral_attached = true;
                 fsm.m_logger->info("抓取成功！已返回原位");
+                if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
             }
             else
             {
@@ -94,7 +102,8 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            if (fsm.mineral_attached)
+            bool is_deposit = fsm.mineral_attached;
+            if (is_deposit)
             {
                 fsm.m_logger->info("准备存矿...");
                 fsm.m_logger->info("[提示] 请微调位置，再次发送指令以放置。");
@@ -103,7 +112,11 @@ namespace boost::msm::front::puml
             {
                 fsm.m_logger->info("准备取矿...");
                 fsm.m_logger->info("[提示] 请微调位置，再次发送指令以抓取。");
+                if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
             }
+
+            int pose_index = is_deposit ? fsm.stored_count : (fsm.stored_count - 1);
+            if (fsm.callbacks.on_enter_store) fsm.callbacks.on_enter_store(pose_index);
         }
     };
 
@@ -116,22 +129,20 @@ namespace boost::msm::front::puml
             // 根据进入状态前的 mineral_attached 判断是存还是取
             if (fsm.mineral_attached)
             {
-                // 存矿动作
-                // fsm.hardware_grip(true); // 张开扔掉
+                // 存矿动作: 张开释放
+                if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
                 fsm.mineral_attached = false;
                 ++fsm.stored_count;
                 fsm.m_logger->info("存矿完成");
             }
             else
             {
-                // 取矿动作
-                // fsm.hardware_grip(false); // 闭合抓取
+                // 取矿动作: 闭合抓取
+                if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
                 fsm.mineral_attached = true;
                 --fsm.stored_count;
                 fsm.m_logger->info("取矿完成");
             }
-            // fsm.hardware_move("HOME_POS");
-            // 这里也可以顺便清除累积误差
         }
     };
 
@@ -162,10 +173,16 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            // 简单模拟切换
             static bool open = false;
             open = !open;
-            // fsm.hardware_grip(open);
+            if (open)
+            {
+                if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
+            }
+            else
+            {
+                if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
+            }
         }
     };
 
@@ -284,6 +301,16 @@ namespace yandy::modules
     {
         using namespace msm::front::puml;
 
+        struct FSMCallbacks
+        {
+            std::function<void()> on_enable;
+            std::function<void()> on_disable;
+            std::function<void()> on_open_claw;
+            std::function<void()> on_close_claw;
+            std::function<void()> on_brake;
+            std::function<void(int pose_index)> on_enter_store;
+        };
+
         class YandyArmFSMDef : public msm::front::state_machine_def<YandyArmFSMDef>
         {
         public:
@@ -303,6 +330,7 @@ namespace yandy::modules
             std::shared_ptr<spdlog::logger> m_logger;
             bool mineral_attached = false;
             int stored_count = 0;
+            FSMCallbacks callbacks;
         };
 
         typedef msm::back11::state_machine<YandyArmFSMDef> YandyArmFSMBackend;
@@ -317,6 +345,7 @@ namespace yandy::modules
         YandyState getState() const;
         bool hasMineralAttached() const { return m_fsm.mineral_attached; }
         int getStoredCount() const { return m_fsm.stored_count; }
+        void setCallbacks(const detail::FSMCallbacks& cb);
 
     private:
         detail::YandyArmFSMBackend m_fsm;

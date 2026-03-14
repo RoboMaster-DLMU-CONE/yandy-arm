@@ -12,16 +12,27 @@
 
 yandy::Robot::Robot()
 {
-    m_input.setCommandCb([this](const YandyControlCmd cmd)
-    {
-        m_fsm.processCmd(cmd);
-    });
     m_logger = core::create_logger("YandyRobot", spdlog::level::info);
     m_logger->info("try loading config from {}", YANDY_ROBOT_CONFIG);
 
     // 构造 TrajectoryPlanner (需要 m_solver 的 model)
     m_planner = std::make_unique<modules::TrajectoryPlanner>(
         DT, m_solver.getModel(), m_solver.getGeometryModel());
+
+    // 注册 FSM 回调: 一次性硬件动作由 action 直接驱动
+    modules::detail::FSMCallbacks cb;
+    cb.on_enable = [this] { m_arm_hw.enable(); };
+    cb.on_disable = [this] { m_arm_hw.disable(); };
+    cb.on_open_claw = [this] { m_effector.openClaw(); };
+    cb.on_close_claw = [this] { m_effector.closeClaw(); };
+    cb.on_brake = [this] { m_planner->brake(); };
+    cb.on_enter_store = [this](int idx) { m_store_pose_index = idx; };
+    m_fsm.setCallbacks(cb);
+
+    m_input.setCommandCb([this](const YandyControlCmd cmd)
+    {
+        m_fsm.processCmd(cmd);
+    });
 
     auto tbl = toml::parse_file(YANDY_ROBOT_CONFIG);
     m_is_simulate = tbl["simulate"].value<bool>().value();
@@ -113,13 +124,8 @@ void yandy::Robot::start()
             m_logger->info("OMPL plan loaded into trajectory planner");
         }
 
-        // 3. 检测状态转换
+        // 3. 获取当前状态 (用于连续行为派发)
         const auto cur_state = m_fsm.getState();
-        if (cur_state != m_prev_state)
-        {
-            onStateTransition(m_prev_state, cur_state);
-            m_prev_state = cur_state;
-        }
 
         // 4. 按状态派发 (设置目标给 planner)
         switch (cur_state)
@@ -230,61 +236,6 @@ void yandy::Robot::visionLoop()
 }
 
 // ============================================================
-// 状态转换一次性动作
-// ============================================================
-
-void yandy::Robot::onStateTransition(const YandyState from, const YandyState to)
-{
-    m_logger->info("State transition: {} -> {}", format_as(from), format_as(to));
-
-    // ---- 进入新状态 ----
-    switch (to)
-    {
-    case YandyState::Manual:
-        if (from == YandyState::Disabled)
-        {
-            m_arm_hw.enable();
-        }
-        else if (from == YandyState::Fetching)
-        {
-            m_effector.closeClaw();
-        }
-        else if (from == YandyState::Store)
-        {
-            // 存矿完成: 松开夹爪释放; 取矿完成: 闭合夹爪抓住
-            // store_finish 已经更新了 mineral_attached:
-            //   存矿后 mineral_attached = false, 取矿后 mineral_attached = true
-            if (m_fsm.hasMineralAttached())
-                m_effector.closeClaw(); // 取矿完成，抓住
-            else
-                m_effector.openClaw(); // 存矿完成，释放
-        }
-        break;
-
-    case YandyState::Disabled:
-        m_arm_hw.disable();
-        break;
-
-    case YandyState::Fetching:
-        m_effector.openClaw(); // 张开准备抓取
-        break;
-
-    case YandyState::Store:
-        // 进入时 mineral_attached 尚未被 store_finish 修改
-        if (!m_fsm.hasMineralAttached())
-            m_effector.openClaw(); // 准备取矿
-        break;
-
-    case YandyState::Error:
-        m_arm_hw.disable();
-        break;
-
-    default:
-        break;
-    }
-}
-
-// ============================================================
 // 持续性状态处理
 // ============================================================
 
@@ -373,6 +324,5 @@ void yandy::Robot::handleFetching()
 
 void yandy::Robot::handleStore()
 {
-    // TODO: switch pose from the variable from fsm
-    solveAndPlan(m_store_pose[0]);
+    solveAndPlan(m_store_pose[m_store_pose_index]);
 }

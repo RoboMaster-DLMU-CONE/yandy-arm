@@ -71,17 +71,16 @@ namespace yandy
         // ---- 运行时状态 ----
         std::shared_ptr<spdlog::logger> m_logger;
         std::atomic<bool> m_running{true};
-        YandyState m_prev_state{YandyState::Disabled};
         common::JointState m_state{};
         common::JointCommand m_cmd{};
         Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
         bool m_is_simulate = false;
         Eigen::Isometry3d m_sim_cam_pose{Eigen::Isometry3d::Identity()}; // 仿真模式下手持相机的固定位姿 (base_link 系)
         bool m_ompl_pending{false}; // OMPL 规划是否正在进行中
+        int m_store_pose_index{0}; // 当前存取矿位姿索引 (由 FSM 回调设置)
 
         // ---- 私有方法 ----
         void visionLoop();
-        void onStateTransition(YandyState from, YandyState to);
         void handleManual();
         void handleFetching();
         void handleStore();

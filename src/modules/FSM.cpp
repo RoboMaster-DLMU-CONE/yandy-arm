@@ -60,6 +60,11 @@ namespace yandy::modules
         sync_state();
     }
 
+    void YandyArmFSM::setCallbacks(const detail::FSMCallbacks& cb)
+    {
+        m_fsm.callbacks = cb;
+    }
+
     void YandyArmFSM::logState() const
     {
         m_logger->info("Current State:{}", format_as(m_current_state.load(std::memory_order_acquire)));

@@ -18,6 +18,7 @@ Yandy-Arm 是一个面向 RoboMaster 工程机器人任务的高性能机械臂�
 - **250Hz 控制循环**: 基于 Ruckig 的实时轨迹规划，确保运动平滑且响应迅速
 - **动力学前馈补偿**: 使用 Pinocchio 库进行精确的动力学计算，抵消重力和惯性影响
 - **6 自由度控制**: 支持完整的空间位姿控制 (位置 + 姿态)
+- **智能避障规划**: OMPL + RRTConnect 算法，自动生成无碰撞路径
 
 ### 状态机驱动
 - **PlantUML 可视化**: 状态机逻辑使用 PlantUML 描述，代码与文档同步
@@ -35,8 +36,8 @@ Yandy-Arm 是一个面向 RoboMaster 工程机器人任务的高性能机械臂�
 ┌─────────────────────────────────────────────────────────────────┐
 │                        控制层 (250Hz)                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │ InputProvider│→ │   FSM (MSM)  │→ │  DynamicsSolver      │   │
-│  │ (遥控器/键盘) │  │ (状态决策)   │  │ (Pinocchio + Ruckig) │   │
+│  │ InputProvider│→ │   FSM (MSM)  │→ │ TrajectoryPlanner    │   │
+│  │ (遥控器/键盘) │  │ (状态决策)   │  │ (Ruckig + OMPL)      │   │
 │  └──────────────┘  └──────────────┘  └──────────────────────┘   │
 │                              ↓                                   │
 │                    ┌──────────────┐                             │
@@ -207,6 +208,7 @@ yandy-arm/
 |------|------|------|
 | **ArmHW** | CAN 总线硬件抽象 | OneMotor, Pinocchio |
 | **DynamicsSolver** | 运动学/动力学求解 | Pinocchio, OMPL, Ruckig |
+| **TrajectoryPlanner** | 实时轨迹生成 + 路径规划 | Ruckig, OMPL, Pinocchio |
 | **VisionSystem** | 视觉识别与定位 | OpenCV, OpenVINO, MVS |
 | **FSM** | 状态机决策 | Boost.MSM |
 | **InputProvider** | 遥控器/键盘输入解析 | HySerial |
@@ -219,7 +221,8 @@ yandy-arm/
 |------|------|
 | 控制频率 | 250 Hz (4ms 周期) |
 | 视觉处理 | ~30 FPS |
-| 轨迹规划 | < 1ms (Ruckig) |
+| 轨迹规划 (Ruckig) | < 0.1ms |
+| 路径规划 (OMPL) | < 1s (RRTConnect) |
 | 状态机响应 | < 100μs |
 
 ## 开发指南
