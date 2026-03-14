@@ -15,12 +15,6 @@ namespace yandy
 {
     namespace detail
     {
-        struct ControlTarget
-        {
-            Eigen::Vector3d target_pos_w;
-            Eigen::Matrix3d target_rot_w;
-        };
-
         struct VisionData
         {
             bool valid{false};
