@@ -64,9 +64,24 @@ namespace yandy::modules
             int max_iter = 100
         );
 
+        /**
+            * @brief 检查两个关节构型之间的直线路径是否存在碰撞
+            *
+            * 在 q_start 和 q_goal 之间线性插值 num_samples 个点，
+            * 逐一调用 Pinocchio 碰撞检测。
+            *
+            * @return true 表示路径上存在碰撞
+            */
+        bool checkPathCollision(
+            const common::VectorJ& q_start,
+            const common::VectorJ& q_goal,
+            int num_samples = 10
+        );
+
         // 获取 Pinocchio 模型和数据
         pinocchio::Model& getModel() { return m_model; }
         pinocchio::Data& getData() { return m_data; }
+        const pinocchio::GeometryModel& getGeometryModel() const { return m_geom_model; }
 
     private:
         common::VectorJ generateRandomJointPositions();

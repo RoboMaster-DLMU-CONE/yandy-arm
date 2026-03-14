@@ -1,6 +1,7 @@
 #ifndef YANDY_ARM_ROBOT_HPP
 #define YANDY_ARM_ROBOT_HPP
 
+#include <memory>
 #include <thread>
 
 #include <yandy/modules/ArmHW.hpp>
@@ -8,6 +9,7 @@
 #include <yandy/modules/Effector.hpp>
 #include <yandy/modules/FSM.hpp>
 #include <yandy/modules/InputProvider.hpp>
+#include <yandy/modules/TrajectoryPlanner.hpp>
 #include <yandy/modules/VisionSystem.hpp>
 #include <yandy/common/NBuf.hpp>
 
@@ -53,6 +55,7 @@ namespace yandy
         // ---- Modules ----
         modules::ArmHW m_arm_hw;
         modules::DynamicsSolver m_solver;
+        std::unique_ptr<modules::TrajectoryPlanner> m_planner; // 延迟构造，依赖 m_solver
         modules::YandyArmFSM m_fsm;
         modules::InputProvider m_input;
         modules::HikDriver m_hik_driver;
@@ -74,6 +77,7 @@ namespace yandy
         Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
         bool m_is_simulate = false;
         Eigen::Isometry3d m_sim_cam_pose{Eigen::Isometry3d::Identity()}; // 仿真模式下手持相机的固定位姿 (base_link 系)
+        bool m_ompl_pending{false}; // OMPL 规划是否正在进行中
 
         // ---- 私有方法 ----
         void visionLoop();
@@ -81,6 +85,10 @@ namespace yandy
         void handleManual();
         void handleFetching();
         void handleStore();
+
+        // IK 求解 + 碰撞检测 + 轨迹规划调度
+        // 返回 true 表示目标已成功设置给 planner
+        bool solveAndPlan(const Eigen::Isometry3d& target_pose);
     };
 }
 

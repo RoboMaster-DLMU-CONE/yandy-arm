@@ -304,6 +304,23 @@ namespace yandy::modules
         return tl::unexpected(best_q);
     }
 
+    bool DynamicsSolver::checkPathCollision(
+        const common::VectorJ& q_start,
+        const common::VectorJ& q_goal,
+        int num_samples)
+    {
+        for (int i = 1; i <= num_samples; ++i)
+        {
+            const double t = static_cast<double>(i) / num_samples;
+            const common::VectorJ q_sample = (1.0 - t) * q_start + t * q_goal;
+            if (pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q_sample, true))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     common::VectorJ DynamicsSolver::generateRandomJointPositions()
     {
         common::VectorJ q;

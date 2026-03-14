@@ -35,6 +35,16 @@ target_link_libraries(yandy_arm_solver
         ruckig
 )
 
+add_library(yandy_arm_trajectory_planner SHARED modules/TrajectoryPlanner.cpp)
+target_link_libraries(yandy_arm_trajectory_planner
+        PUBLIC
+        yandy_arm_logger
+        yandy_arm_types
+        pinocchio::pinocchio
+        ompl::ompl
+        ruckig
+)
+
 add_library(yandy_arm_vision_system SHARED modules/VisionSystem.cpp)
 target_link_directories(yandy_arm_vision_system
         PUBLIC
@@ -85,6 +95,7 @@ target_link_libraries(yandy_arm_robot_system
         yandy_arm_arm_hw
         yandy_arm_effector
         yandy_arm_solver
+        yandy_arm_trajectory_planner
         yandy_arm_vision_system
         yandy_arm_fsm
         yandy_arm_input_provider

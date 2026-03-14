@@ -19,6 +19,10 @@ yandy::Robot::Robot()
     m_logger = core::create_logger("YandyRobot", spdlog::level::info);
     m_logger->info("try loading config from {}", YANDY_ROBOT_CONFIG);
 
+    // 构造 TrajectoryPlanner (需要 m_solver 的 model)
+    m_planner = std::make_unique<modules::TrajectoryPlanner>(
+        DT, m_solver.getModel(), m_solver.getGeometryModel());
+
     auto tbl = toml::parse_file(YANDY_ROBOT_CONFIG);
     m_is_simulate = tbl["simulate"].value<bool>().value();
     if (m_is_simulate)
@@ -82,6 +86,9 @@ void yandy::Robot::start()
     m_cmd.kp.fill(20.0);
     m_cmd.kd.fill(1.0);
 
+    // 初始化 Ruckig 的当前状态
+    m_planner->syncState(m_state.q, m_state.v);
+
     // 读取当前 store 关节位置
     for (size_t i = 0; i < 2; ++i)
     {
@@ -99,7 +106,14 @@ void yandy::Robot::start()
         m_arm_hw.read(m_state);
         m_solver.updateKinematics(m_state.q, m_state.v);
 
-        // 2. 检测状态转换
+        // 2. 检查 OMPL 是否有新规划结果
+        if (m_ompl_pending && m_planner->consumePlanResult())
+        {
+            m_ompl_pending = false;
+            m_logger->info("OMPL plan loaded into trajectory planner");
+        }
+
+        // 3. 检测状态转换
         const auto cur_state = m_fsm.getState();
         if (cur_state != m_prev_state)
         {
@@ -107,25 +121,22 @@ void yandy::Robot::start()
             m_prev_state = cur_state;
         }
 
-        // 3. 按状态派发 (设置 m_cmd)
+        // 4. 按状态派发 (设置目标给 planner)
         switch (cur_state)
         {
         case YandyState::Manual:
             handleManual();
-            m_arm_hw.write(m_cmd);
             break;
         case YandyState::Fetching:
             handleFetching();
-            m_arm_hw.write(m_cmd);
             break;
         case YandyState::Store:
             handleStore();
-            m_arm_hw.write(m_cmd);
             break;
         case YandyState::Disabled:
         case YandyState::Error:
         default:
-            // 保持当前位置 + 重力补偿 (仿真物理步进必需)
+            // 保持当前位置 + 重力补偿
             m_cmd.q_des = m_state.q;
             m_cmd.v_des.setZero();
             m_cmd.tau_ff = m_solver.computeGravity();
@@ -133,10 +144,10 @@ void yandy::Robot::start()
             break;
         }
 
-        // 4. 仿真步进 (真实硬件时 step() 为空)
+        // 5. 仿真步进 (真实硬件时 step() 为空)
         m_arm_hw.step(DT);
 
-        // 5. 写入可视化数据
+        // 6. 写入可视化数据
         {
             detail::RobotVizData vd;
             vd.q = m_state.q;
@@ -158,7 +169,7 @@ void yandy::Robot::start()
             m_viz_buf.write(vd);
         }
 
-        // 6. 定频
+        // 7. 定频
         std::this_thread::sleep_until(loop_start + std::chrono::duration<double>(DT));
     }
 
@@ -170,6 +181,8 @@ void yandy::Robot::stop()
     if (!m_running.load(std::memory_order_acquire))
         return; // 已经停止
     m_running.store(false, std::memory_order_release);
+
+    m_planner->stopPlanThread();
 
     if (m_vision_thread.joinable())
         m_vision_thread.join();
@@ -275,6 +288,48 @@ void yandy::Robot::onStateTransition(const YandyState from, const YandyState to)
 // 持续性状态处理
 // ============================================================
 
+bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d& target_pose)
+{
+    m_target_pose = target_pose;
+    m_cmd.tau_ff = m_solver.computeGravity();
+
+    // IK 求解
+    auto q_sol = m_solver.solveIK(target_pose, m_state.q, 0.01);
+    if (!q_sol)
+    {
+        // IK 失败，Ruckig 继续执行当前轨迹 (或已停车)
+        // 仍然需要步进 Ruckig 输出平滑指令
+        m_planner->update(m_cmd.q_des, m_cmd.v_des);
+        m_arm_hw.write(m_cmd);
+        return false;
+    }
+
+    const auto& q_goal = q_sol.value();
+
+    // 路径碰撞检测
+    if (m_solver.checkPathCollision(m_state.q, q_goal))
+    {
+        // 路径有碰撞 → 停车 + 唤醒 OMPL
+        if (!m_ompl_pending)
+        {
+            m_logger->warn("Path collision detected, braking and requesting OMPL plan");
+            m_planner->brake();
+            m_planner->requestPlan(m_state.q, q_goal);
+            m_ompl_pending = true;
+        }
+        // OMPL 正在规划中，Ruckig 继续执行停车/已有轨迹
+        m_planner->update(m_cmd.q_des, m_cmd.v_des);
+        m_arm_hw.write(m_cmd);
+        return false;
+    }
+
+    // 无碰撞 → 直接设目标
+    m_planner->setTarget(q_goal);
+    m_planner->update(m_cmd.q_des, m_cmd.v_des);
+    m_arm_hw.write(m_cmd);
+    return true;
+}
+
 void yandy::Robot::handleManual()
 {
     const auto pack = m_input.getLatestCommand();
@@ -287,18 +342,7 @@ void yandy::Robot::handleManual()
         Eigen::AngleAxisd(pack.pitch, Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(pack.roll, Eigen::Vector3d::UnitX()));
 
-    m_target_pose = target;
-    m_cmd.tau_ff = m_solver.computeGravity();
-
-    // IK 求解
-    const auto q_sol = m_solver.solveIK(target, m_state.q);
-    if (!q_sol)
-    {
-        return;
-    }
-    m_cmd.q_des = q_sol.value();
-    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
+    solveAndPlan(target);
 }
 
 void yandy::Robot::handleFetching()
@@ -306,48 +350,29 @@ void yandy::Robot::handleFetching()
     auto vd = m_vision_buf.try_read();
     if (!vd.has_value() || !vd->valid)
     {
-        // 无有效视觉数据，保持当前位置 + 重力补偿
-        m_cmd.q_des = m_state.q;
-        m_cmd.v_des.setZero();
+        // 无有效视觉数据，Ruckig 继续执行当前轨迹
         m_cmd.tau_ff = m_solver.computeGravity();
+        m_planner->update(m_cmd.q_des, m_cmd.v_des);
+        m_arm_hw.write(m_cmd);
         return;
     }
 
     // 将相机坐标系下的位姿转换到基座坐标系
+    Eigen::Isometry3d target;
     if (m_is_simulate)
     {
-        // 仿真模式：相机手持固定，用配置的固定位姿变换 (T_base_cam 不随机械臂运动)
-        m_target_pose = m_sim_cam_pose * vd->unit_pose;
+        target = m_sim_cam_pose * vd->unit_pose;
     }
     else
     {
-        m_target_pose = m_solver.transformObjectToBase(vd->unit_pose);
+        target = m_solver.transformObjectToBase(vd->unit_pose);
     }
 
-    m_cmd.tau_ff = m_solver.computeGravity();
-
-    auto q_sol = m_solver.solveIK(m_target_pose, m_state.q);
-    if (!q_sol)
-    {
-        return;
-    }
-    m_cmd.q_des = q_sol.value();
-    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
+    solveAndPlan(target);
 }
 
 void yandy::Robot::handleStore()
 {
     // TODO: switch pose from the variable from fsm
-    m_target_pose = m_store_pose[0];
-    m_cmd.tau_ff = m_solver.computeGravity();
-
-    auto q_sol = m_solver.solveIK(m_store_pose[0], m_state.q);
-    if (!q_sol)
-    {
-        return;
-    }
-    m_cmd.q_des = q_sol.value();
-    m_cmd.v_des = (m_cmd.q_des - m_state.q) / DT;
-    m_cmd.v_des = m_cmd.v_des.cwiseMin(5.0).cwiseMax(-5.0);
+    solveAndPlan(m_store_pose[0]);
 }
