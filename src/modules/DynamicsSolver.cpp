@@ -191,8 +191,9 @@ namespace yandy::modules
     }
 
 
-    common::VectorJ DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
-                                             const common::VectorJ& q_guess, double tol, int max_iter)
+    tl::expected<common::VectorJ, common::VectorJ> DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
+                                                                            const common::VectorJ& q_guess, double tol,
+                                                                            int max_iter)
     {
         constexpr int MAX_RETRIES = 5;
         common::VectorJ best_q = q_guess;
@@ -298,11 +299,11 @@ namespace yandy::modules
             // 避免在无法完美到达时跳变为随机解
             if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol && !collision_detected)
             {
-                return best_q;
+                return tl::unexpected(best_q);
             }
         }
 
-        return best_q;
+        return tl::unexpected(best_q);
     }
 
     common::VectorJ DynamicsSolver::generateRandomJointPositions()

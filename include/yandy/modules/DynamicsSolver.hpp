@@ -8,6 +8,7 @@
 #include <pinocchio/algorithm/geometry.hpp>
 #include <pinocchio/collision/collision.hpp>
 #include <spdlog/spdlog.h>
+#include <tl/expected.hpp>
 
 namespace yandy::modules
 {
@@ -54,9 +55,9 @@ namespace yandy::modules
             * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
             * @param tol         位置误差容忍度 (单位: m 或 rad)
             * @param max_iter    最大迭代次数
-            * @return VectorJ 返回关节角
+            * @return 收敛时返回关节角；未收敛时在 error 中返回最佳近似解
             */
-        common::VectorJ solveIK(
+        tl::expected<common::VectorJ, common::VectorJ> solveIK(
             const Eigen::Isometry3d& target_pose,
             const common::VectorJ& q_guess,
             double tol = 1e-4,
