@@ -4,6 +4,9 @@
 #include <yandy/common/Types.hpp>
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/multibody/data.hpp>
+#include <pinocchio/multibody/geometry.hpp>
+#include <pinocchio/algorithm/geometry.hpp>
+#include <pinocchio/collision/collision.hpp>
 #include <spdlog/spdlog.h>
 
 namespace yandy::modules
@@ -69,6 +72,8 @@ namespace yandy::modules
 
         pinocchio::Model m_model;
         pinocchio::Data m_data;
+        pinocchio::GeometryModel m_geom_model;
+        pinocchio::GeometryData m_geom_data;
 
         common::VectorJ m_current_q{};
         common::VectorJ m_current_v{};

@@ -15,12 +15,56 @@
 namespace yandy::modules
 {
     DynamicsSolver::DynamicsSolver()
+        : m_geom_data(m_geom_model) // Initialize with empty model, update later
     {
         m_logger = core::create_logger("Solver", spdlog::level::info);
         m_logger->info("Initializing solver, loading urdf from {}", YANDY_URDF_PATH);
         try
         {
             pinocchio::urdf::buildModel(YANDY_URDF_PATH, m_model);
+            
+            // Build geometry model for collision
+            std::vector<std::string> package_dirs;
+            // Assuming YANDY_CONFIG_PATH is a string literal ending with /
+            std::string config_path = YANDY_CONFIG_PATH;
+            package_dirs.push_back(config_path + "urdf");
+            
+            pinocchio::urdf::buildGeom(m_model, YANDY_URDF_PATH, pinocchio::COLLISION, m_geom_model, package_dirs);
+            
+            m_geom_model.addAllCollisionPairs();
+            
+            // Remove collision pairs between adjacent links (parent-child)
+            for (int i = 0; i < m_geom_model.collisionPairs.size(); )
+            {
+                const auto& cp = m_geom_model.collisionPairs[i];
+                const auto& obj1 = m_geom_model.geometryObjects[cp.first];
+                const auto& obj2 = m_geom_model.geometryObjects[cp.second];
+                
+                const auto joint1 = obj1.parentJoint;
+                const auto joint2 = obj2.parentJoint;
+                
+                bool remove = false;
+                // Self-collision (same joint)
+                if (joint1 == joint2) remove = true;
+                
+                // Adjacent collision
+                if (m_model.parents[joint1] == joint2 || m_model.parents[joint2] == joint1) remove = true;
+                
+                if (remove)
+                {
+                    m_geom_model.removeCollisionPair(cp);
+                    // Do not increment i, as removeCollisionPair shifts the vector
+                }
+                else
+                {
+                    i++;
+                }
+            }
+            
+            // Re-initialize geometry data with the populated model
+            m_geom_data = pinocchio::GeometryData(m_geom_model);
+            
+            m_logger->info("Geometry model loaded. Collision pairs: {}", m_geom_model.collisionPairs.size());
         }
         catch (const std::exception& e)
         {
@@ -171,6 +215,7 @@ namespace yandy::modules
         {
             // 初始化当前关节角
             common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions();
+            bool collision_detected = false;
 
             // 迭代循环
             for (int i = 0; i < max_iter; ++i)
@@ -194,7 +239,28 @@ namespace yandy::modules
                 // 判断是否收敛
                 if (current_err_norm < tol)
                 {
-                    return q;
+                    // Check collision
+                    pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q, true);
+                    bool collision = false;
+                    for(size_t k = 0; k < m_geom_model.collisionPairs.size(); ++k)
+                    {
+                        if(m_geom_data.collisionResults[k].isCollision())
+                        {
+                            collision = true;
+                            break;
+                        }
+                    }
+
+                    if (!collision)
+                    {
+                        return q;
+                    }
+                    else
+                    {
+                        // Collision detected, force restart
+                        collision_detected = true;
+                        break; // Break inner loop to trigger restart
+                    }
                 }
 
                 // 计算 6D 雅可比矩阵 (LOCAL frame to match log6 error)
@@ -230,7 +296,7 @@ namespace yandy::modules
 
             // 如果第一次尝试（使用猜测值）结果尚可，则不再尝试随机重启
             // 避免在无法完美到达时跳变为随机解
-            if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol)
+            if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol && !collision_detected)
             {
                 return best_q;
             }
