@@ -150,25 +150,27 @@ namespace yandy::modules
     common::VectorJ DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
                                              const common::VectorJ& q_guess, double tol, int max_iter)
     {
-        constexpr int MAX_RETRIES = 3;
+        constexpr int MAX_RETRIES = 5;
         common::VectorJ best_q = q_guess;
         double min_err = 1e9;
 
         // 转换目标位姿为 Pinocchio 的 SE3 格式
         const pinocchio::SE3 oMdes(target_pose.rotation(), target_pose.translation());
-        // 获取当前末端位姿 (引用,该值会实时更新)
-        const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
-        // 算法参数
-        // 关节速度增量 (dq)
-        Eigen::VectorXd v(m_model.nv);
 
-        // 宽容误差阈值。如果第一轮猜测求解后误差小于此值，即使未达 tol 也不触发随机重启
-        // 防止机械臂在极限位置追踪时发生剧烈抽搐
+        // 预分配计算变量
+        Eigen::VectorXd v(m_model.nv);
+        Eigen::Matrix<double, 6, common::JOINT_NUM> J(6, m_model.nv);
+        Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
+        Eigen::Vector<double, common::JOINT_NUM> g;
+
+        // 阻尼系数 (Damped Least Squares)
+        constexpr double lambda = 1e-3;
+        constexpr double lambda_sq = lambda * lambda;
 
         for (auto restart = 0; restart < MAX_RETRIES; ++restart)
         {
             // 初始化当前关节角
-            common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions(); // 第一次用猜测值，后面用随机值
+            common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions();
 
             // 迭代循环
             for (int i = 0; i < max_iter; ++i)
@@ -178,129 +180,62 @@ namespace yandy::modules
                 pinocchio::updateFramePlacements(m_model, m_data);
 
                 // 计算当前位姿和目标位姿之间的 6D 误差 (在末端局部坐标系下)
-                // logic: err = log(oMcurr^{-1} * oMdes)
-                pinocchio::SE3 iMd = oMcurr.actInv(oMdes);
-                Eigen::Matrix<double, 6, 1> err6 = pinocchio::log6(iMd).toVector();
+                const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
+                const pinocchio::SE3 iMd = oMcurr.actInv(oMdes);
+                Eigen::Matrix<double, 6, 1> err = pinocchio::log6(iMd).toVector();
 
-                // 6 DOF, utilize full error vector
-
-                const double current_err_norm = err6.norm();
+                const double current_err_norm = err.norm();
                 if (current_err_norm < min_err)
                 {
                     min_err = current_err_norm;
-                    best_q = q; // 保存历史上误差最小的一组解
+                    best_q = q;
                 }
 
-                // 判断是否收敛（此时衡量 6D 误差）
+                // 判断是否收敛
                 if (current_err_norm < tol)
                 {
                     return q;
                 }
 
-                // 计算 6D 雅可比矩阵
-                Eigen::Matrix<double, 6, common::JOINT_NUM> J6(6, m_model.nv);
-                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J6);
+                // 计算 6D 雅可比矩阵 (LOCAL frame to match log6 error)
+                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J);
 
-                // 6 DOF, utilize full Jacobian
+                // 标准 DLS 求解: (J^T * J + lambda^2 * I) * v = J^T * err
+                H = J.transpose() * J;
+                H.diagonal().array() += lambda_sq;
+                g = J.transpose() * err;
 
-                // [基于雅可比列清零的限位防抖 (Active Set 思想)
-                // 先计算原始梯度方向 (g_raw > 0 表示该关节想要增加角度以减小误差)
-                Eigen::VectorXd g_raw = J6.transpose() * err6;
+                // 使用 LDLT 分解求解线性方程 (H 是对称正定的)
+                v = H.ldlt().solve(g);
 
-                for (int k = 0; k < m_model.nv; ++k)
-                {
-                    constexpr double limit_epsilon = 1e-3;
-                    const bool hit_upper = (q[k] >= m_model.upperPositionLimit[k] - limit_epsilon);
-                    const bool hit_lower = (q[k] <= m_model.lowerPositionLimit[k] + limit_epsilon);
-
-                    // 如果碰到上限且想继续往上，或者碰到下限且想继续往下
-                    if ((hit_upper && g_raw[k] > 0) || (hit_lower && g_raw[k] < 0))
-                    {
-                        // 彻底切断该关节的动力：将该列雅可比清零 (假装该关节不可动)
-                        J6.col(k).setZero();
-                    }
-                }
-
-                // 重新使用处理过后的 J6 构建 DLS 矩阵
-
-                // 动态阻尼系数
-                // 误差越大，阻尼越大（防止发散）；误差越小，阻尼越小（加速收敛）
-                constexpr double base_damping = 1e-3;
-                const double adaptive_damping = base_damping + 0.05 * current_err_norm;
-
-                // 加权软限位
-                // 在关节逼近限位时，增加特定关节的对角线惩罚权重
-
-                Eigen::VectorXd w_limit = Eigen::VectorXd::Zero(m_model.nv);
-
-                for (int k = 0; k < m_model.nv; ++k)
-                {
-                    constexpr double max_penalty = 1.0;
-                    constexpr double buffer_ratio = 0.1;
-                    const double q_min = m_model.lowerPositionLimit[k];
-                    const double q_max = m_model.upperPositionLimit[k];
-                    const double q_range = q_max - q_min;
-                    const double q_buffer = q_range * buffer_ratio;
-
-                    if (q[k] > q_max - q_buffer) // 接近上限
-                    {
-                        // 二次函数惩罚：越靠近边缘，惩罚越大
-                        const double penetration = (q[k] - (q_max - q_buffer)) / q_buffer;
-                        w_limit[k] = max_penalty * (penetration * penetration);
-                    }
-                    else if (q[k] < q_min + q_buffer) // 接近下限
-                    {
-                        const double penetration = ((q_min + q_buffer) - q[k]) / q_buffer;
-                        w_limit[k] = max_penalty * (penetration * penetration);
-                    }
-                }
-
-
-                // 标准的阻尼最小二乘求解 (DLS)
-                // 构建 H 矩阵并加入 动态阻尼 和 软限位惩罚
-                Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H = J6.transpose() * J6;
-                // H_ii = J^T J + lambda^2 + w_limit
-                H.diagonal().array() += (adaptive_damping * adaptive_damping) + w_limit.array();
-
-                Eigen::Vector<double, common::JOINT_NUM> g;
-                g = J6.transpose() * err6;
-
-                // 求解关节速度增量
-                v = H.llt().solve(g);
-
-                // 早停机制 (Early Stopping)
-                // 如果算出来的速度极小，说明已经卡在某个局部最优或者极限边界上了
-                // 继续迭代毫无意义，只会产生微小的数值抖动，直接退出当前重试循环
-                if (v.norm() < 1e-4)
-                {
-                    break;
-                }
-
-                // 步长限制，防止奇异点附近发散
+                // 步长限制，防止发散
                 if (constexpr double max_step = 0.5; v.norm() > max_step)
                 {
                     v = v.normalized() * max_step;
                 }
 
-                // 更新关节角
-                // q = q + v
-                // pinocchio::integrate 处理了欧拉角/四元数等复杂情况，虽然对纯旋转轴简单的加法也可以
+                // 早停: 如果步长过小，说明已收敛到局部极小值
+                if (v.norm() < 1e-6)
+                {
+                    break;
+                }
+
+                // 更新关节角: q = q + v
                 pinocchio::integrate(m_model, q, v, q);
 
-                // 关节限位夹钳 (Clamping)
-                // 防止解算出超出物理极限的角度
+                // 简单的关节限位夹钳 (Clamping)
+                // 相比之前的 Active Set 策略，直接夹钳在 6-DoF 下通常更稳定且不易陷入死锁
                 q = q.cwiseMax(m_model.lowerPositionLimit).cwiseMin(m_model.upperPositionLimit);
             }
-            // 防止跨帧抖动
-            // 如果第一轮（猜测值）虽然没达到完美的 tol，但是误差在可接受范围内
-            // 说明已经尽力靠在极限边缘了，直接返回，不再盲目尝试随机重启
+
+            // 如果第一次尝试（使用猜测值）结果尚可，则不再尝试随机重启
+            // 避免在无法完美到达时跳变为随机解
             if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol)
             {
                 return best_q;
             }
         }
 
-        // 6 自由度机械臂，期望完美收敛
         return best_q;
     }
 
