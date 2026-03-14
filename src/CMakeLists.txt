@@ -31,6 +31,8 @@ target_link_libraries(yandy_arm_solver
         PUBLIC
         yandy_arm_logger
         pinocchio::pinocchio
+        ompl
+        ruckig
 )
 
 add_library(yandy_arm_vision_system SHARED modules/VisionSystem.cpp)

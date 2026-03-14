@@ -1,1 +1,2 @@
+set(COAL_DISABLE_HPP_FCL_WARNINGS ON)
 find_package(pinocchio REQUIRED)
