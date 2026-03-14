@@ -208,10 +208,6 @@ namespace yandy::modules
         Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
         Eigen::Vector<double, common::JOINT_NUM> g;
 
-        // 阻尼系数 (Damped Least Squares)
-        constexpr double lambda = 1e-3;
-        constexpr double lambda_sq = lambda * lambda;
-
         for (auto restart = 0; restart < MAX_RETRIES; ++restart)
         {
             // 初始化当前关节角
@@ -241,16 +237,7 @@ namespace yandy::modules
                 if (current_err_norm < tol)
                 {
                     // Check collision
-                    pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q, true);
-                    bool collision = false;
-                    for(size_t k = 0; k < m_geom_model.collisionPairs.size(); ++k)
-                    {
-                        if(m_geom_data.collisionResults[k].isCollision())
-                        {
-                            collision = true;
-                            break;
-                        }
-                    }
+                    bool collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q, true);
 
                     if (!collision)
                     {
@@ -266,6 +253,11 @@ namespace yandy::modules
 
                 // 计算 6D 雅可比矩阵 (LOCAL frame to match log6 error)
                 pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J);
+
+                // 自适应阻尼
+                constexpr double base_lambda = 1e-3;
+                const double adaptive_lambda = base_lambda + 0.05 * current_err_norm;
+                const double lambda_sq = adaptive_lambda * adaptive_lambda;
 
                 // 标准 DLS 求解: (J^T * J + lambda^2 * I) * v = J^T * err
                 H = J.transpose() * J;
@@ -299,7 +291,13 @@ namespace yandy::modules
             // 避免在无法完美到达时跳变为随机解
             if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol && !collision_detected)
             {
-                return tl::unexpected(best_q);
+                // 必须验证 best_q 是否碰撞
+                bool best_q_collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, best_q, true);
+                if (!best_q_collision)
+                {
+                    return tl::unexpected(best_q);
+                }
+                // 如果撞了，什么也不做，继续跑下一轮 restart 循环寻找安全解
             }
         }
 

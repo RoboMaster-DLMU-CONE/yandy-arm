@@ -31,7 +31,7 @@ target_link_libraries(yandy_arm_solver
         PUBLIC
         yandy_arm_logger
         pinocchio::pinocchio
-        ompl
+        ompl::ompl
         ruckig
 )
 
