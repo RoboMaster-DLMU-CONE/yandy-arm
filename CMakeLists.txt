@@ -20,3 +20,5 @@ add_subdirectory(src)
 if (YANDY_BUILD_EXAMPLES)
     add_subdirectory(example)
 endif ()
+
+add_subdirectory(scripts)
