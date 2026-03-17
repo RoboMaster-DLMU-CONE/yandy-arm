@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 3.28)
 project(yandy_arm)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -18,7 +18,7 @@ include(FindModules)
 add_subdirectory(src)
 
 if (YANDY_BUILD_EXAMPLES)
-    add_subdirectory(example)
+  add_subdirectory(example)
 endif ()
 
 add_subdirectory(scripts)
