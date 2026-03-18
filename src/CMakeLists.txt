@@ -30,6 +30,7 @@ add_library(yandy_arm_solver SHARED modules/DynamicsSolver.cpp)
 target_link_libraries(yandy_arm_solver
         PUBLIC
         yandy_arm_logger
+        yandy_arm_types
         pinocchio::pinocchio
         ompl::ompl
         ruckig
@@ -71,6 +72,7 @@ include(GrepPumlFSM)
 target_link_libraries(yandy_arm_fsm
         PUBLIC
         yandy_arm_logger
+        yandy_arm_types
 )
 
 add_library(yandy_arm_input_provider SHARED
@@ -86,7 +88,7 @@ target_link_libraries(yandy_arm_input_provider
 )
 
 if (YANDY_BUILD_TELEOP_CLIENT)
-    add_subdirectory(teleop_client)
+  add_subdirectory(teleop_client)
 endif ()
 
 add_library(yandy_arm_robot_system SHARED Robot.cpp)
