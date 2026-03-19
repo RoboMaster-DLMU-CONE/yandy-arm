@@ -24,6 +24,7 @@ target_link_libraries(yandy_arm_effector
         yandy_arm_logger
         yandy_arm_types
         tomlplusplus::tomlplusplus
+        OneMotor::OneMotor
 )
 
 add_library(yandy_arm_solver SHARED modules/DynamicsSolver.cpp)

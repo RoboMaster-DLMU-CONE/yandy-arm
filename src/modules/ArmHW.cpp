@@ -43,10 +43,10 @@ namespace yandy::modules
         class RealArmHW : public IArmHW
         {
         public:
-            explicit RealArmHW(std::string_view can_port)
+            explicit RealArmHW(one::can::CanDriver& can)
+                : m_driver(can)
             {
                 m_logger = core::create_logger("RealArmHW", spdlog::level::info);
-                m_driver = std::make_unique<one::can::CanDriver>(std::string(can_port));
                 parse_config();
             }
 
@@ -162,23 +162,23 @@ namespace yandy::modules
                 case 0:
                     // J1 : 4340
                     m_motors[joint_index] = std::make_unique<
-                        J4340>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J4340>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 case 1:
                     // J2 : 10010L
-                    m_motors[joint_index] = std::make_unique<J10010L>(*m_driver, dm::Param{
+                    m_motors[joint_index] = std::make_unique<J10010L>(m_driver, dm::Param{
                                                                           can_id, master_id, dm::MITMode{kp, kd}
                                                                       });
                     break;
                 case 2:
                     // J3 : 8009
                     m_motors[joint_index] = std::make_unique<
-                        J8009>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J8009>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 case 4:
                     // J5 : 4310
                     m_motors[joint_index] = std::make_unique<
-                        J4310>(*m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
+                        J4310>(m_driver, dm::Param{can_id, master_id, dm::MITMode{kp, kd}});
                     break;
                 default: ;
                 }
@@ -198,7 +198,7 @@ namespace yandy::modules
                 kd = joint_node["mit_pid"]["kd"].value<float>().value();
 
                 m_motors[joint_index] = std::make_unique<
-                    GM6020_Voltage>(*m_driver, dji::Param{id, dji::MITMode{kp, kd}});
+                    GM6020_Voltage>(m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
                 m_logger->info(
                     "J{} GM6020 motor parsed: dir: {}, offset: {}",
@@ -215,14 +215,14 @@ namespace yandy::modules
                 kd = joint_node["mit_pid"]["kd"].value<float>().value();
 
                 m_motors[joint_index] = std::make_unique<
-                    M2006>(*m_driver, dji::Param{id, dji::MITMode{kp, kd}});
+                    M2006>(m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
                 m_logger->info(
                     "J{} M2006 motor parsed: dir: {}, offset: {}",
                     joint_index + 1, m_dirs[joint_index], m_offsets[joint_index]);
             }
 
-            std::unique_ptr<one::can::CanDriver> m_driver;
+            one::can::CanDriver& m_driver;
             std::array<std::unique_ptr<IMotor>, common::JOINT_NUM> m_motors;
             std::array<float, common::JOINT_NUM> m_dirs{};
             std::array<float, common::JOINT_NUM> m_offsets{};
@@ -315,14 +315,13 @@ namespace yandy::modules
         };
     }
 
-    ArmHW::ArmHW()
+    ArmHW::ArmHW(one::can::CanDriver& can)
     {
         const auto logger = core::create_logger("ArmHW", spdlog::level::info);
         logger->info("Reading joint config from: {}", JOINT_CONFIG_PATH);
 
         auto tbl = toml::parse_file(JOINT_CONFIG_PATH);
         const auto simulate = tbl["simulate"].value<bool>().value();
-        const auto can_port = tbl["can_port"].value<std::string>().value();
         if (simulate)
         {
             logger->info("Simulation mode detected. Creating FakeArmHW...");
@@ -331,7 +330,7 @@ namespace yandy::modules
         else
         {
             logger->info("Real hardware mode detected. Creating RealArmHW...");
-            m_impl = std::make_unique<detail::RealArmHW>(can_port);
+            m_impl = std::make_unique<detail::RealArmHW>(can);
         }
     }
 

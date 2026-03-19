@@ -10,7 +10,9 @@
 // 构造 / 析构
 // ============================================================
 
-yandy::Robot::Robot()
+yandy::Robot::Robot(one::can::CanDriver& can)
+    : m_arm_hw(can),
+      m_effector(can)
 {
     m_logger = core::create_logger("YandyRobot", spdlog::level::info);
     m_logger->info("try loading config from {}", YANDY_ROBOT_CONFIG);

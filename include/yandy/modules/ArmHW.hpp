@@ -5,12 +5,14 @@
 #include <yandy/common/Types.hpp>
 #include "IArmHW.hpp"
 
+namespace one::can { class CanDriver; }
+
 namespace yandy::modules
 {
     class ArmHW
     {
     public:
-        ArmHW();
+        explicit ArmHW(one::can::CanDriver& can);
         ~ArmHW();
 
         void read(common::JointState& state);

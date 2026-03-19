@@ -13,6 +13,8 @@
 #include <yandy/modules/VisionSystem.hpp>
 #include <yandy/common/NBuf.hpp>
 
+namespace one::can { class CanDriver; }
+
 namespace yandy
 {
     namespace detail
@@ -38,7 +40,7 @@ namespace yandy
     class Robot
     {
     public:
-        Robot();
+        explicit Robot(one::can::CanDriver& can);
         ~Robot();
         void start();
         void stop();

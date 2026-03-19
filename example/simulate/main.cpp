@@ -13,6 +13,8 @@
 #include <pinocchio/algorithm/geometry.hpp>
 
 #include <yandy/Robot.hpp>
+#include <one/can/CanDriver.hpp>
+#include <toml++/toml.hpp>
 
 using namespace yandy::common;
 
@@ -102,7 +104,12 @@ int main()
                    rerun::Points3D({{0.0f, 0.0f, 0.0f}}).with_radii({0.03f}).with_colors({0xFF0000FF}));
 
     // ---- 启动 Robot (后台线程) ----
-    yandy::Robot robot;
+    // 从配置文件读取 CAN 端口
+    auto joint_tbl = toml::parse_file(YANDY_CONFIG_PATH "joint.toml");
+    const auto can_port = joint_tbl["can_port"].value<std::string>().value();
+    one::can::CanDriver can(can_port);
+
+    yandy::Robot robot(can);
     std::thread robot_thread([&robot] { robot.start(); });
 
     // ---- 可视化主循环 ----
