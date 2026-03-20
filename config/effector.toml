@@ -1,5 +1,8 @@
 # Effector (夹爪) 配置
 
+# 仿真模式
+simulate = true
+
 # DJI M2006 电机 ID
 id = 8
 
@@ -21,6 +24,10 @@ soft_limit_buffer = 0.1
 holding_max_current_mA = 3000.0
 
 # 碰撞检测参数
-collision_pos_error_threshold = 0.3      # 位置误差阈值 (rad)
-collision_current_rate_threshold = 50.0  # 电流上升率阈值 (mA/周期)
-collision_velocity_drop_threshold = 0.1  # 速度下降率阈值 (rad/s 每周期)
+collision_pos_error_threshold = 0.3     # 位置误差阈值 (rad)
+collision_current_rate_threshold = 50.0 # 电流上升率阈值 (mA/周期)
+collision_velocity_drop_threshold = 0.1 # 速度下降率阈值 (rad/s 每周期)
+
+# 仿真参数
+sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)
+sim_move_speed = 3.0 # 仿真模式下的移动速度 (rad/s)
