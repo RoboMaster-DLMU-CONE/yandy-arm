@@ -88,6 +88,9 @@ struct __attribute__((packed)) YandyControlPack {
   float roll;  // rad
   float pitch; // rad
   float yaw;   // rad
+  float gimbal_z;
+  float gimbal_yaw;
+  float gimbal_pitch;
 
   YandyControlCmd cmd;
 };
@@ -100,28 +103,59 @@ struct RPL::Meta::PacketTraits<YandyControlPack>
 };
 
 namespace yandy::common {
-// 关节数量
-constexpr int JOINT_NUM = 6;
+// 关节数量定义
+constexpr int ARM_JOINT_NUM = 6;    // 机械臂关节数 (由上位机控制)
+constexpr int GIMBAL_JOINT_NUM = 3; // 云台关节数 (状态从下位机读取)
+constexpr int JOINT_NUM = ARM_JOINT_NUM + GIMBAL_JOINT_NUM; // 总关节数
 
-using VectorJ = Eigen::Matrix<double, JOINT_NUM, 1>;
+// 类型别名
+using VectorArm =
+    Eigen::Matrix<double, ARM_JOINT_NUM, 1>; // 机械臂关节向量 (6D)
+using VectorGimbal =
+    Eigen::Matrix<double, GIMBAL_JOINT_NUM, 1>;      // 云台关节向量 (3D)
+using VectorJ = Eigen::Matrix<double, JOINT_NUM, 1>; // 完整关节向量 (9D)
 using Vector6 =
     Eigen::Matrix<double, 6, 1>; // 用于空间力向量 (Fx,Fy,Fz, Tx,Ty,Tz)
 
-// 机械臂状态
-struct JointState {
-  Eigen::Vector<double, JOINT_NUM> q;   // 位置 (rad)
-  Eigen::Vector<double, JOINT_NUM> v;   // 速度 (rad/s)
-  Eigen::Vector<double, JOINT_NUM> tau; // 反馈力矩 (Nm)
+// 云台状态 (只读，来自下位机)
+struct GimbalState {
+  VectorGimbal q{VectorGimbal::Zero()}; // 位置 (rad): [z, yaw, pitch]
+  VectorGimbal v{VectorGimbal::Zero()}; // 速度 (rad/s)
 };
 
-// 机械臂控制指令
-struct JointCommand {
-  Eigen::Vector<double, JOINT_NUM> q_des{};  // 期望位置
-  Eigen::Vector<double, JOINT_NUM> v_des{};  // 期望速度
-  Eigen::Vector<double, JOINT_NUM> kp{};     // 刚度
-  Eigen::Vector<double, JOINT_NUM> kd{};     // 阻尼
-  Eigen::Vector<double, JOINT_NUM> tau_ff{}; // 前馈力矩 (核心)
+// 机械臂状态 (6 DoF)
+struct ArmState {
+  VectorArm q{VectorArm::Zero()};   // 位置 (rad)
+  VectorArm v{VectorArm::Zero()};   // 速度 (rad/s)
+  VectorArm tau{VectorArm::Zero()}; // 反馈力矩 (Nm)
 };
+
+// 机械臂控制指令 (6 DoF)
+struct ArmCommand {
+  VectorArm q_des{VectorArm::Zero()};  // 期望位置
+  VectorArm v_des{VectorArm::Zero()};  // 期望速度
+  VectorArm kp{VectorArm::Zero()};     // 刚度
+  VectorArm kd{VectorArm::Zero()};     // 阻尼
+  VectorArm tau_ff{VectorArm::Zero()}; // 前馈力矩 (核心)
+};
+
+// 辅助函数: 组装完整关节向量
+inline VectorJ combineJoints(const VectorArm &arm, const VectorGimbal &gimbal) {
+  VectorJ full;
+  full << arm, gimbal;
+  return full;
+}
+
+// 辅助函数: 从完整向量中提取机械臂部分
+inline VectorArm extractArm(const VectorJ &full) {
+  return full.head<ARM_JOINT_NUM>();
+}
+
+// 辅助函数: 从完整向量中提取云台部分
+inline VectorGimbal extractGimbal(const VectorJ &full) {
+  return full.tail<GIMBAL_JOINT_NUM>();
+}
+
 } // namespace yandy::common
 
 #endif // YANDY_ARM_TYPES_HPP

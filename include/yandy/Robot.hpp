@@ -27,7 +27,7 @@ namespace yandy
 
         struct RobotVizData
         {
-            common::VectorJ q{common::VectorJ::Zero()};
+            common::VectorJ q{common::VectorJ::Zero()};  // 完整 9D 关节状态 (用于可视化)
             Eigen::Isometry3d ee_pose{Eigen::Isometry3d::Identity()};
             Eigen::Isometry3d target_pose{Eigen::Isometry3d::Identity()};
             YandyState state{YandyState::Disabled};
@@ -73,8 +73,9 @@ namespace yandy
         // ---- 运行时状态 ----
         std::shared_ptr<spdlog::logger> m_logger;
         std::atomic<bool> m_running{true};
-        common::JointState m_state{};
-        common::JointCommand m_cmd{};
+        common::ArmState m_arm_state{};      // 机械臂状态 (6 DoF)
+        common::ArmCommand m_arm_cmd{};      // 机械臂指令 (6 DoF)
+        common::GimbalState m_gimbal_state{}; // 云台状态 (3 DoF, 来自下位机)
         Eigen::Isometry3d m_target_pose{Eigen::Isometry3d::Identity()};
         bool m_is_simulate = false;
         Eigen::Isometry3d m_sim_cam_pose{Eigen::Isometry3d::Identity()}; // 仿真模式下手持相机的固定位姿 (base_link 系)
@@ -86,6 +87,9 @@ namespace yandy
         void handleManual();
         void handleFetching();
         void handleStore();
+        
+        // 从 YandyControlPack 提取云台状态
+        void updateGimbalFromPack(const YandyControlPack& pack);
 
         // IK 求解 + 碰撞检测 + 轨迹规划调度
         // 返回 true 表示目标已成功设置给 planner

@@ -48,8 +48,9 @@ int main() {
   logger->info("Enabling motors...");
   arm_hw->enable();
 
-  common::JointState current_state;
-  common::JointCommand cmd;
+  common::ArmState current_state;
+  common::ArmCommand cmd;
+  common::VectorGimbal gimbal_q = common::VectorGimbal::Zero();
 
   // Initialize command
   cmd.q_des.setZero();
@@ -67,12 +68,12 @@ int main() {
     // 1. Read State
     arm_hw->read(current_state);
 
-    // 2. Update Kinematics
-    solver->updateKinematics(current_state.q, current_state.v);
+    // 2. Update Kinematics (云台状态固定为 0)
+    solver->updateKinematics(current_state.q, current_state.v, gimbal_q);
 
     // 3. Compute Gravity Compensation (RNEA with 0 acceleration)
     // Note: computeGravity() is a wrapper for computeRNEA(0, 0)
-    common::VectorJ tau_g = solver->computeGravity();
+    common::VectorArm tau_g = solver->computeGravity();
 
     // 4. Set Command
     // We set q_des to current_q to minimize position error term if Kp > 0

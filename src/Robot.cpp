@@ -91,16 +91,17 @@ void yandy::Robot::start()
     }
 
     // 读取初始关节状态，预填充 cmd 防止首帧飞车
-    m_arm_hw.read(m_state);
-    m_solver.updateKinematics(m_state.q, m_state.v);
-    m_cmd.q_des = m_state.q;
-    m_cmd.v_des.setZero();
-    m_cmd.tau_ff = m_solver.computeGravity();
-    m_cmd.kp.fill(20.0);
-    m_cmd.kd.fill(1.0);
+    m_arm_hw.read(m_arm_state);
+    m_solver.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q);
+    m_arm_cmd.q_des = m_arm_state.q;
+    m_arm_cmd.v_des.setZero();
+    m_arm_cmd.tau_ff = m_solver.computeGravity();
+    m_arm_cmd.kp.fill(20.0);
+    m_arm_cmd.kd.fill(1.0);
 
     // 初始化 Ruckig 的当前状态
-    m_planner->syncState(m_state.q, m_state.v);
+    m_planner->syncState(m_arm_state.q, m_arm_state.v);
+    m_planner->updateGimbalState(m_gimbal_state.q);
 
     // 读取当前 store 关节位置
     for (size_t i = 0; i < 2; ++i)
@@ -115,21 +116,28 @@ void yandy::Robot::start()
     {
         const auto loop_start = std::chrono::steady_clock::now();
 
-        // 1. 读取硬件 & 更新运动学
-        m_arm_hw.read(m_state);
-        m_solver.updateKinematics(m_state.q, m_state.v);
+        // 1. 读取硬件状态 (机械臂 6 DoF)
+        m_arm_hw.read(m_arm_state);
+        
+        // 2. 从输入获取云台状态
+        const auto pack = m_input.getLatestCommand();
+        updateGimbalFromPack(pack);
+        
+        // 3. 更新运动学 (传入分离的 arm/gimbal 状态)
+        m_solver.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q);
+        m_planner->updateGimbalState(m_gimbal_state.q);
 
-        // 2. 检查 OMPL 是否有新规划结果
+        // 4. 检查 OMPL 是否有新规划结果
         if (m_ompl_pending && m_planner->consumePlanResult())
         {
             m_ompl_pending = false;
             m_logger->info("OMPL plan loaded into trajectory planner");
         }
 
-        // 3. 获取当前状态 (用于连续行为派发)
+        // 5. 获取当前状态 (用于连续行为派发)
         const auto cur_state = m_fsm.getState();
 
-        // 4. 按状态派发 (设置目标给 planner)
+        // 6. 按状态派发 (设置目标给 planner)
         switch (cur_state)
         {
         case YandyState::Manual:
@@ -145,20 +153,21 @@ void yandy::Robot::start()
         case YandyState::Error:
         default:
             // 保持当前位置 + 重力补偿
-            m_cmd.q_des = m_state.q;
-            m_cmd.v_des.setZero();
-            m_cmd.tau_ff = m_solver.computeGravity();
-            m_arm_hw.write(m_cmd);
+            m_arm_cmd.q_des = m_arm_state.q;
+            m_arm_cmd.v_des.setZero();
+            m_arm_cmd.tau_ff = m_solver.computeGravity();
+            m_arm_hw.write(m_arm_cmd);
             break;
         }
 
-        // 5. 仿真步进 (真实硬件时 step() 为空)
+        // 7. 仿真步进 (真实硬件时 step() 为空)
         m_arm_hw.step(DT);
 
-        // 6. 写入可视化数据
+        // 8. 写入可视化数据
         {
             detail::RobotVizData vd;
-            vd.q = m_state.q;
+            // 组装完整 9D 关节状态用于可视化
+            vd.q = common::combineJoints(m_arm_state.q, m_gimbal_state.q);
             vd.ee_pose = m_solver.getEndEffectorPose();
             vd.target_pose = m_target_pose;
             vd.state = cur_state;
@@ -177,7 +186,7 @@ void yandy::Robot::start()
             m_viz_buf.write(vd);
         }
 
-        // 7. 定频
+        // 9. 定频
         std::this_thread::sleep_until(loop_start + std::chrono::duration<double>(DT));
     }
 
@@ -197,6 +206,20 @@ void yandy::Robot::stop()
 
     m_arm_hw.disable();
     m_logger->info("Robot stopped.");
+}
+
+// ============================================================
+// 云台状态更新
+// ============================================================
+
+void yandy::Robot::updateGimbalFromPack(const YandyControlPack& pack)
+{
+    // 从 YandyControlPack 提取云台状态
+    m_gimbal_state.q[0] = static_cast<double>(pack.gimbal_z);
+    m_gimbal_state.q[1] = static_cast<double>(pack.gimbal_yaw);
+    m_gimbal_state.q[2] = static_cast<double>(pack.gimbal_pitch);
+    // 云台速度暂时设为 0 (下位机不提供速度信息)
+    m_gimbal_state.v.setZero();
 }
 
 // ============================================================
@@ -244,42 +267,41 @@ void yandy::Robot::visionLoop()
 bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d& target_pose)
 {
     m_target_pose = target_pose;
-    m_cmd.tau_ff = m_solver.computeGravity();
+    m_arm_cmd.tau_ff = m_solver.computeGravity();
 
-    // IK 求解
-    auto q_sol = m_solver.solveIK(target_pose, m_state.q, 0.01);
+    // IK 求解 (只针对机械臂 6 DoF)
+    auto q_sol = m_solver.solveIK(target_pose, m_arm_state.q, 0.01);
     if (!q_sol)
     {
         // IK 失败，Ruckig 继续执行当前轨迹 (或已停车)
-        // 仍然需要步进 Ruckig 输出平滑指令
-        m_planner->update(m_cmd.q_des, m_cmd.v_des);
-        m_arm_hw.write(m_cmd);
+        m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+        m_arm_hw.write(m_arm_cmd);
         return false;
     }
 
     const auto& q_goal = q_sol.value();
 
-    // 路径碰撞检测
-    if (m_solver.checkPathCollision(m_state.q, q_goal))
+    // 路径碰撞检测 (使用当前云台状态)
+    if (m_solver.checkPathCollision(m_arm_state.q, q_goal))
     {
         // 路径有碰撞 → 停车 + 唤醒 OMPL
         if (!m_ompl_pending)
         {
             m_logger->warn("Path collision detected, braking and requesting OMPL plan");
             m_planner->brake();
-            m_planner->requestPlan(m_state.q, q_goal);
+            m_planner->requestPlan(m_arm_state.q, q_goal);
             m_ompl_pending = true;
         }
         // OMPL 正在规划中，Ruckig 继续执行停车/已有轨迹
-        m_planner->update(m_cmd.q_des, m_cmd.v_des);
-        m_arm_hw.write(m_cmd);
+        m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+        m_arm_hw.write(m_arm_cmd);
         return false;
     }
 
     // 无碰撞 → 直接设目标
     m_planner->setTarget(q_goal);
-    m_planner->update(m_cmd.q_des, m_cmd.v_des);
-    m_arm_hw.write(m_cmd);
+    m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+    m_arm_hw.write(m_arm_cmd);
     return true;
 }
 
@@ -304,9 +326,9 @@ void yandy::Robot::handleFetching()
     if (!vd.has_value() || !vd->valid)
     {
         // 无有效视觉数据，Ruckig 继续执行当前轨迹
-        m_cmd.tau_ff = m_solver.computeGravity();
-        m_planner->update(m_cmd.q_des, m_cmd.v_des);
-        m_arm_hw.write(m_cmd);
+        m_arm_cmd.tau_ff = m_solver.computeGravity();
+        m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+        m_arm_hw.write(m_arm_cmd);
         return;
     }
 

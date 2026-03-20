@@ -30,7 +30,7 @@ namespace yandy::modules
     {
         m_logger = core::create_logger("TrajPlanner", spdlog::level::info);
 
-        // Ruckig 运动学约束
+        // Ruckig 运动学约束 (只针对机械臂 6 DoF)
         m_ruckig_input.max_velocity.setConstant(6.0);       // rad/s (URDF limit: 8)
         m_ruckig_input.max_acceleration.setConstant(20.0);   // rad/s^2
         m_ruckig_input.max_jerk.setConstant(100.0);          // rad/s^3
@@ -44,7 +44,7 @@ namespace yandy::modules
 
         // 启动 OMPL 后台线程
         m_plan_thread = std::thread([this] { planLoop(); });
-        m_logger->info("TrajectoryPlanner initialized, dt={:.4f}s", dt);
+        m_logger->info("TrajectoryPlanner initialized, dt={:.4f}s, DOF={}", dt, DOF);
     }
 
     TrajectoryPlanner::~TrajectoryPlanner()
@@ -64,14 +64,20 @@ namespace yandy::modules
     // 主循环接口
     // ================================================================
 
-    void TrajectoryPlanner::syncState(const common::VectorJ& q, const common::VectorJ& v)
+    void TrajectoryPlanner::syncState(const common::VectorArm& q, const common::VectorArm& v)
     {
         m_ruckig_input.current_position = q;
         m_ruckig_input.current_velocity = v;
         // acceleration 由 Ruckig 内部跟踪，不从外部覆盖
     }
 
-    void TrajectoryPlanner::setTarget(const common::VectorJ& q_goal)
+    void TrajectoryPlanner::updateGimbalState(const common::VectorGimbal& gimbal_q)
+    {
+        std::lock_guard lock(m_gimbal_mutex);
+        m_current_gimbal_q = gimbal_q;
+    }
+
+    void TrajectoryPlanner::setTarget(const common::VectorArm& q_goal)
     {
         // 目标没有显著变化时跳过，避免每帧重置 Ruckig
         constexpr double TARGET_CHANGE_THRESHOLD = 1e-3; // rad
@@ -99,7 +105,7 @@ namespace yandy::modules
         m_finished.store(false, std::memory_order_relaxed);
     }
 
-    bool TrajectoryPlanner::update(common::VectorJ& q_des, common::VectorJ& v_des)
+    bool TrajectoryPlanner::update(common::VectorArm& q_des, common::VectorArm& v_des)
     {
         auto result = m_ruckig.update(m_ruckig_input, m_ruckig_output);
 
@@ -136,7 +142,7 @@ namespace yandy::modules
     // OMPL 接口
     // ================================================================
 
-    void TrajectoryPlanner::requestPlan(const common::VectorJ& q_start, const common::VectorJ& q_goal)
+    void TrajectoryPlanner::requestPlan(const common::VectorArm& q_start, const common::VectorArm& q_goal)
     {
         {
             std::lock_guard lock(m_plan_mutex);
@@ -204,15 +210,22 @@ namespace yandy::modules
         m_logger->info("OMPL plan thread exited");
     }
 
-    TrajectoryPlan TrajectoryPlanner::runOMPL(const common::VectorJ& q_start, const common::VectorJ& q_goal)
+    TrajectoryPlan TrajectoryPlanner::runOMPL(const common::VectorArm& q_start, const common::VectorArm& q_goal)
     {
         TrajectoryPlan plan;
+        
+        // 获取当前云台状态 (线程安全)
+        common::VectorGimbal gimbal_q;
+        {
+            std::lock_guard lock(m_gimbal_mutex);
+            gimbal_q = m_current_gimbal_q;
+        }
 
-        // 构建关节空间
+        // 构建关节空间 (只针对机械臂 6 DoF)
         auto space = std::make_shared<ob::RealVectorStateSpace>(DOF);
         ob::RealVectorBounds bounds(DOF);
 
-        // 从 Pinocchio model 读取真实关节限位
+        // 从 Pinocchio model 读取机械臂关节限位 (前 6 个关节)
         for (int i = 0; i < DOF; ++i)
         {
             bounds.setLow(i, m_model.lowerPositionLimit[i]);
@@ -223,14 +236,18 @@ namespace yandy::modules
         og::SimpleSetup ss(space);
 
         // 碰撞检测回调 — 使用线程私有的 Pinocchio data
-        ss.setStateValidityChecker([this](const ob::State* state) -> bool
+        // 将 6D 机械臂配置 + 3D 云台状态组装成完整 9D 进行碰撞检测
+        ss.setStateValidityChecker([this, &gimbal_q](const ob::State* state) -> bool
         {
             const auto* s = state->as<ob::RealVectorStateSpace::StateType>();
-            common::VectorJ q;
+            common::VectorArm arm_q;
             for (int i = 0; i < DOF; ++i)
-                q[i] = s->values[i];
+                arm_q[i] = s->values[i];
 
-            return !pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q, true);
+            // 组装完整 9D 配置
+            const common::VectorJ full_q = common::combineJoints(arm_q, gimbal_q);
+
+            return !pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true);
         });
 
         // 设置起点和终点

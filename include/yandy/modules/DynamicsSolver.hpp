@@ -22,24 +22,26 @@ namespace yandy::modules
 
         // 更新运动学 (FK)
         // 每次控制循环开始时调用一次，计算所有关节的位置、速度、Jacobian
-        void updateKinematics(const common::VectorJ& q, const common::VectorJ& v);
+        // arm_q, arm_v: 机械臂关节状态 (6 DoF)
+        // gimbal_q: 云台关节位置 (3 DoF)，作为已知环境状态
+        void updateKinematics(const common::VectorArm& arm_q, const common::VectorArm& arm_v,
+                              const common::VectorGimbal& gimbal_q);
 
-        // 计算完整逆动力学 (RNEA)
-        // acc_des: 期望加速度 (来自轨迹规划)
-        // ext_wrench_world: 作用在末端的世界坐标系下的外力 (例如矿石重力 [Fx,Fy,Fz,0,0,0])
-        // 返回: 所需关节力矩 tau
-        common::VectorJ computeRNEA(const common::VectorJ& acc_des, const common::Vector6& ext_wrench_world);
+        // 计算完整逆动力学 (RNEA) - 只返回机械臂力矩
+        // acc_des: 机械臂期望加速度 (来自轨迹规划)
+        // ext_wrench_world: 作用在末端的世界坐标系下的外力
+        // 返回: 机械臂所需关节力矩 tau (6 DoF)
+        common::VectorArm computeRNEA(const common::VectorArm& acc_des, const common::Vector6& ext_wrench_world);
 
-        // 仅计算重力补偿 (简化版 RNEA)
-        // 相当于 computeRNEA(0, 0)
-        common::VectorJ computeGravity();
+        // 仅计算机械臂重力补偿 (简化版 RNEA)
+        common::VectorArm computeGravity();
 
         // 获取末端执行器位姿 (用于视觉对齐)
         // 返回: 4x4 变换矩阵 (Isometry3d)
         Eigen::Isometry3d getEndEffectorPose() const;
 
         // 获取相机光心相对于基座的位姿
-        // 调用前必须先调用 updateKinematics(q, v)
+        // 调用前必须先调用 updateKinematics()
         Eigen::Isometry3d getCameraPose() const;
 
         Eigen::Isometry3d getStoreFrame(size_t index) const;
@@ -49,32 +51,34 @@ namespace yandy::modules
         Eigen::Isometry3d transformObjectToBase(const Eigen::Isometry3d& T_cam_obj) const;
 
         /**
-            * @brief 数值法逆运动学求解 (6dof)
-            *
-            * @param target_pose 期望的末端位姿 (基座坐标系)
-            * @param q_guess     猜测的初始角度 (通常传当前角度，传空则使用零位)
-            * @param tol         位置误差容忍度 (单位: m 或 rad)
-            * @param max_iter    最大迭代次数
-            * @return 收敛时返回关节角；未收敛时在 error 中返回最佳近似解
-            */
-        tl::expected<common::VectorJ, common::VectorJ> solveIK(
+         * @brief 数值法逆运动学求解 (仅机械臂 6 DoF)
+         *
+         * @param target_pose 期望的末端位姿 (基座坐标系)
+         * @param arm_q_guess 猜测的机械臂初始角度
+         * @param tol         位置误差容忍度 (单位: m 或 rad)
+         * @param max_iter    最大迭代次数
+         * @return 收敛时返回机械臂关节角；未收敛时在 error 中返回最佳近似解
+         *
+         * 注意: IK 求解时使用当前云台状态 (m_current_gimbal_q) 进行碰撞检测
+         */
+        tl::expected<common::VectorArm, common::VectorArm> solveIK(
             const Eigen::Isometry3d& target_pose,
-            const common::VectorJ& q_guess,
+            const common::VectorArm& arm_q_guess,
             double tol = 1e-4,
             int max_iter = 100
         );
 
         /**
-            * @brief 检查两个关节构型之间的直线路径是否存在碰撞
-            *
-            * 在 q_start 和 q_goal 之间线性插值 num_samples 个点，
-            * 逐一调用 Pinocchio 碰撞检测。
-            *
-            * @return true 表示路径上存在碰撞
-            */
+         * @brief 检查两个机械臂构型之间的直线路径是否存在碰撞
+         *
+         * 在 arm_q_start 和 arm_q_goal 之间线性插值 num_samples 个点，
+         * 使用当前云台状态进行碰撞检测。
+         *
+         * @return true 表示路径上存在碰撞
+         */
         bool checkPathCollision(
-            const common::VectorJ& q_start,
-            const common::VectorJ& q_goal,
+            const common::VectorArm& arm_q_start,
+            const common::VectorArm& arm_q_goal,
             int num_samples = 10
         );
 
@@ -83,16 +87,21 @@ namespace yandy::modules
         pinocchio::Data& getData() { return m_data; }
         const pinocchio::GeometryModel& getGeometryModel() const { return m_geom_model; }
 
+        // 获取当前云台状态 (用于 TrajectoryPlanner)
+        const common::VectorGimbal& getCurrentGimbalQ() const { return m_current_gimbal_q; }
+
     private:
-        common::VectorJ generateRandomJointPositions();
+        common::VectorArm generateRandomArmPositions();
 
         pinocchio::Model m_model;
         pinocchio::Data m_data;
         pinocchio::GeometryModel m_geom_model;
         pinocchio::GeometryData m_geom_data;
 
-        common::VectorJ m_current_q{};
-        common::VectorJ m_current_v{};
+        // 分离存储机械臂和云台状态
+        common::VectorArm m_current_arm_q{common::VectorArm::Zero()};
+        common::VectorArm m_current_arm_v{common::VectorArm::Zero()};
+        common::VectorGimbal m_current_gimbal_q{common::VectorGimbal::Zero()};
 
         pinocchio::JointIndex m_ee_joint_id{static_cast<pinocchio::JointIndex>(-1)}; // 末端关节在 Pinocchio 模型中的索引
         pinocchio::FrameIndex m_tcp_frame_id{static_cast<pinocchio::FrameIndex>(-1)};

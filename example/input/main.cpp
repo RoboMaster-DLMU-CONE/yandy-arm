@@ -15,8 +15,10 @@ int main()
     yandy::modules::InputProvider provider;
     const auto printPack = [logger](const YandyControlPack& pack)
     {
-        const auto [x,y,z,roll,pitch,yaw, s] = pack;
-        logger->info("Received: {}, {}, {}, {}, {}, {}, {}", x, y, z, roll, pitch, yaw, s);
+        logger->info("Received: x={}, y={}, z={}, roll={}, pitch={}, yaw={}, cmd={}",
+                     pack.x, pack.y, pack.z, pack.roll, pack.pitch, pack.yaw, pack.cmd);
+        logger->info("  gimbal: z={}, yaw={}, pitch={}",
+                     pack.gimbal_z, pack.gimbal_yaw, pack.gimbal_pitch);
     };
     provider.setCommandCb([logger](YandyControlCmd cmd)
     {

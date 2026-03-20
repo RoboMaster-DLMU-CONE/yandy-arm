@@ -23,7 +23,7 @@ namespace yandy::modules
     struct TrajectoryPlan
     {
         static constexpr int MAX_WAYPOINTS = 64;
-        std::array<common::VectorJ, MAX_WAYPOINTS> waypoints{};
+        std::array<common::VectorArm, MAX_WAYPOINTS> waypoints{};
         int count{0};
         bool valid{false};
     };
@@ -31,8 +31,8 @@ namespace yandy::modules
     // OMPL 规划请求
     struct PlanRequest
     {
-        common::VectorJ q_start{};
-        common::VectorJ q_goal{};
+        common::VectorArm q_start{};
+        common::VectorArm q_goal{};
         bool pending{false};
     };
 
@@ -49,15 +49,18 @@ namespace yandy::modules
 
         // ---- 主循环调用 (250Hz) ----
 
-        // 设置直达目标 (无碰撞时)
-        void setTarget(const common::VectorJ& q_goal);
+        // 设置直达目标 (无碰撞时) - 只针对机械臂 6 DoF
+        void setTarget(const common::VectorArm& q_goal);
 
-        // 设置当前真实状态 (每帧调用，用于 Ruckig 的 current state)
-        void syncState(const common::VectorJ& q, const common::VectorJ& v);
+        // 设置当前真实状态 (每帧调用，用于 Ruckig 的 current state) - 只针对机械臂
+        void syncState(const common::VectorArm& q, const common::VectorArm& v);
 
-        // Ruckig 步进，返回本帧的期望位置和速度
+        // 更新云台状态 (用于 OMPL 碰撞检测)
+        void updateGimbalState(const common::VectorGimbal& gimbal_q);
+
+        // Ruckig 步进，返回本帧的期望位置和速度 (机械臂 6 DoF)
         // 返回 false 表示轨迹已完成 (Finished)
-        bool update(common::VectorJ& q_des, common::VectorJ& v_des);
+        bool update(common::VectorArm& q_des, common::VectorArm& v_des);
 
         // 紧急停车: 将目标设为当前位置
         void brake();
@@ -67,8 +70,8 @@ namespace yandy::modules
 
         // ---- OMPL 线程相关 ----
 
-        // 请求 OMPL 规划 (唤醒后台线程)
-        void requestPlan(const common::VectorJ& q_start, const common::VectorJ& q_goal);
+        // 请求 OMPL 规划 (唤醒后台线程) - 只针对机械臂
+        void requestPlan(const common::VectorArm& q_start, const common::VectorArm& q_goal);
 
         // 检查 OMPL 是否有新结果，有则加载到 Ruckig waypoint 队列
         bool consumePlanResult();
@@ -76,19 +79,19 @@ namespace yandy::modules
         void stopPlanThread();
 
     private:
-        static constexpr int DOF = common::JOINT_NUM;
+        static constexpr int DOF = common::ARM_JOINT_NUM;  // 只规划机械臂 6 DoF
 
         double m_dt;
 
-        // ---- Ruckig ----
+        // ---- Ruckig (只针对机械臂 6 DoF) ----
         ruckig::Ruckig<DOF, ruckig::EigenVector> m_ruckig;
         ruckig::InputParameter<DOF, ruckig::EigenVector> m_ruckig_input;
         ruckig::OutputParameter<DOF, ruckig::EigenVector> m_ruckig_output;
         std::atomic<bool> m_finished{true};
-        common::VectorJ m_current_target{common::VectorJ::Zero()}; // 当前 Ruckig 目标，用于去重
+        common::VectorArm m_current_target{common::VectorArm::Zero()}; // 当前 Ruckig 目标，用于去重
 
         // ---- Waypoint 队列 (来自 OMPL) ----
-        std::vector<common::VectorJ> m_waypoints;
+        std::vector<common::VectorArm> m_waypoints;
         int m_waypoint_idx{0};
 
         // ---- OMPL 后台线程 ----
@@ -98,9 +101,13 @@ namespace yandy::modules
         PlanRequest m_plan_request;
         std::atomic<bool> m_plan_running{true};
         NBuf<TrajectoryPlan, 3> m_plan_result_buf;
+        
+        // 云台状态 (用于 OMPL 碰撞检测)
+        common::VectorGimbal m_current_gimbal_q{common::VectorGimbal::Zero()};
+        std::mutex m_gimbal_mutex;
 
         void planLoop();
-        TrajectoryPlan runOMPL(const common::VectorJ& q_start, const common::VectorJ& q_goal);
+        TrajectoryPlan runOMPL(const common::VectorArm& q_start, const common::VectorArm& q_goal);
 
         void advanceToNextWaypoint();
 

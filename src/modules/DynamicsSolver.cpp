@@ -3,6 +3,7 @@
 #include <pinocchio/algorithm/kinematics.hpp>
 #include <pinocchio/algorithm/rnea.hpp>
 #include <pinocchio/algorithm/frames.hpp>
+#include <pinocchio/algorithm/jacobian.hpp>
 #include <random>
 #include <cmath>
 #include <algorithm>
@@ -34,7 +35,7 @@ namespace yandy::modules
             m_geom_model.addAllCollisionPairs();
             
             // Remove collision pairs between adjacent links (parent-child)
-            for (int i = 0; i < m_geom_model.collisionPairs.size(); )
+            for (size_t i = 0; i < m_geom_model.collisionPairs.size(); )
             {
                 const auto& cp = m_geom_model.collisionPairs[i];
                 const auto& obj1 = m_geom_model.geometryObjects[cp.first];
@@ -119,47 +120,56 @@ namespace yandy::modules
 
         f_ext_.resize(m_model.njoints, pinocchio::Force::Zero());
 
-        m_logger->info(" Model loaded. Joints: {}, DoF: {}", m_model.njoints, m_model.nv);
+        m_logger->info("Model loaded. Joints: {}, DoF: {} (Arm: {}, Gimbal: {})", 
+                       m_model.njoints, m_model.nv, common::ARM_JOINT_NUM, common::GIMBAL_JOINT_NUM);
     }
 
-    void DynamicsSolver::updateKinematics(const common::VectorJ& q, const common::VectorJ& v)
+    void DynamicsSolver::updateKinematics(const common::VectorArm& arm_q, const common::VectorArm& arm_v,
+                                          const common::VectorGimbal& gimbal_q)
     {
-        m_current_q = q;
-        m_current_v = v;
-        pinocchio::forwardKinematics(m_model, m_data, m_current_q, m_current_v);
+        // 存储分离的状态
+        m_current_arm_q = arm_q;
+        m_current_arm_v = arm_v;
+        m_current_gimbal_q = gimbal_q;
+        
+        // 组装完整的 9D 向量给 Pinocchio
+        const common::VectorJ full_q = common::combineJoints(arm_q, gimbal_q);
+        const common::VectorJ full_v = common::combineJoints(arm_v, common::VectorGimbal::Zero());
+        
+        pinocchio::forwardKinematics(m_model, m_data, full_q, full_v);
         pinocchio::updateFramePlacements(m_model, m_data);
     }
 
-    common::VectorJ DynamicsSolver::computeRNEA(const common::VectorJ& acc_des, const common::Vector6& ext_wrench_world)
+    common::VectorArm DynamicsSolver::computeRNEA(const common::VectorArm& acc_des, const common::Vector6& ext_wrench_world)
     {
         std::ranges::fill(f_ext_, pinocchio::Force::Zero());
         if (!ext_wrench_world.isZero())
         {
-            // Pinocchio 的 f_ext 要求定义在“关节局部坐标系”下
-            // 我们输入的是“世界坐标系”下的力，所以需要转换
-            // 获取末端关节在世界坐标系下的位姿 (Rotation Matrix)
-            // data.oMi[id] 存储了从 Local 到 World 的变换
+            // Pinocchio 的 f_ext 要求定义在"关节局部坐标系"下
             const auto& iso_world_to_local = m_data.oMi[m_ee_joint_id].inverse();
-
-            // 将世界坐标系的力 (Force + Torque) 转换到局部坐标系
-            // act() 是 Pinocchio 的空间变换函数
             const pinocchio::Force f_world(ext_wrench_world.head<3>(), ext_wrench_world.tail<3>());
             const pinocchio::Force f_local = iso_world_to_local.act(f_world);
-
-            // 施加到对应关节
             f_ext_[m_ee_joint_id] = f_local;
         }
-        // 运行 RNEA
-        return pinocchio::rnea(m_model, m_data,
-                               m_current_q, // 使用 updateKinematics 时存下的位置
-                               m_current_v,
-                               acc_des,
-                               f_ext_);
+        
+        // 组装完整的 9D 向量
+        const common::VectorJ full_q = common::combineJoints(m_current_arm_q, m_current_gimbal_q);
+        const common::VectorJ full_v = common::combineJoints(m_current_arm_v, common::VectorGimbal::Zero());
+        const common::VectorJ full_acc = common::combineJoints(acc_des, common::VectorGimbal::Zero());
+        
+        // 运行 RNEA，返回完整 9D 力矩
+        const common::VectorJ full_tau = pinocchio::rnea(m_model, m_data, full_q, full_v, full_acc, f_ext_);
+        
+        // 只返回机械臂部分 (前 6 个元素)
+        return common::extractArm(full_tau);
     }
 
-    common::VectorJ DynamicsSolver::computeGravity()
+    common::VectorArm DynamicsSolver::computeGravity()
     {
-        return pinocchio::rnea(m_model, m_data, m_current_q, common::VectorJ::Zero(), common::VectorJ::Zero());
+        const common::VectorJ full_q = common::combineJoints(m_current_arm_q, m_current_gimbal_q);
+        const common::VectorJ zero_vel = common::VectorJ::Zero();
+        const common::VectorJ full_tau = pinocchio::rnea(m_model, m_data, full_q, zero_vel, zero_vel);
+        return common::extractArm(full_tau);
     }
 
     Eigen::Isometry3d DynamicsSolver::getEndEffectorPose() const
@@ -185,40 +195,45 @@ namespace yandy::modules
 
     Eigen::Isometry3d DynamicsSolver::transformObjectToBase(const Eigen::Isometry3d& T_cam_obj) const
     {
-        // T_base_cam: 此时刻相机的位姿 (由 getCameraPose 算出)
         const Eigen::Isometry3d T_base_cam = getCameraPose();
         return T_base_cam * T_cam_obj;
     }
 
 
-    tl::expected<common::VectorJ, common::VectorJ> DynamicsSolver::solveIK(const Eigen::Isometry3d& target_pose,
-                                                                            const common::VectorJ& q_guess, double tol,
-                                                                            int max_iter)
+    tl::expected<common::VectorArm, common::VectorArm> DynamicsSolver::solveIK(
+        const Eigen::Isometry3d& target_pose,
+        const common::VectorArm& arm_q_guess, 
+        double tol,
+        int max_iter)
     {
         constexpr int MAX_RETRIES = 5;
-        common::VectorJ best_q = q_guess;
+        common::VectorArm best_arm_q = arm_q_guess;
         double min_err = 1e9;
 
         // 转换目标位姿为 Pinocchio 的 SE3 格式
         const pinocchio::SE3 oMdes(target_pose.rotation(), target_pose.translation());
 
-        // 预分配计算变量
-        Eigen::VectorXd v(m_model.nv);
-        Eigen::Matrix<double, 6, common::JOINT_NUM> J(6, m_model.nv);
-        Eigen::Matrix<double, common::JOINT_NUM, common::JOINT_NUM> H;
-        Eigen::Vector<double, common::JOINT_NUM> g;
+        // 预分配计算变量 (只针对 6 DoF 机械臂)
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, 1> v_arm;
+        Eigen::Matrix<double, 6, common::JOINT_NUM> J_full;  // 完整 6x9 雅可比
+        Eigen::Matrix<double, 6, common::ARM_JOINT_NUM> J_arm; // 机械臂部分 6x6 雅可比
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, common::ARM_JOINT_NUM> H;
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, 1> g;
 
         for (auto restart = 0; restart < MAX_RETRIES; ++restart)
         {
-            // 初始化当前关节角
-            common::VectorJ q = (restart == 0) ? q_guess : generateRandomJointPositions();
+            // 初始化当前机械臂关节角
+            common::VectorArm arm_q = (restart == 0) ? arm_q_guess : generateRandomArmPositions();
             bool collision_detected = false;
 
             // 迭代循环
             for (int i = 0; i < max_iter; ++i)
             {
+                // 组装完整关节向量 (使用当前云台状态)
+                const common::VectorJ full_q = common::combineJoints(arm_q, m_current_gimbal_q);
+                
                 // 计算正向运动学和关节雅可比
-                pinocchio::computeJointJacobians(m_model, m_data, q);
+                pinocchio::computeJointJacobians(m_model, m_data, full_q);
                 pinocchio::updateFramePlacements(m_model, m_data);
 
                 // 计算当前位姿和目标位姿之间的 6D 误差 (在末端局部坐标系下)
@@ -230,29 +245,31 @@ namespace yandy::modules
                 if (current_err_norm < min_err)
                 {
                     min_err = current_err_norm;
-                    best_q = q;
+                    best_arm_q = arm_q;
                 }
 
                 // 判断是否收敛
                 if (current_err_norm < tol)
                 {
-                    // Check collision
-                    bool collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q, true);
+                    // Check collision (使用完整 9D 配置)
+                    bool collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true);
 
                     if (!collision)
                     {
-                        return q;
+                        return arm_q;
                     }
                     else
                     {
-                        // Collision detected, force restart
                         collision_detected = true;
-                        break; // Break inner loop to trigger restart
+                        break;
                     }
                 }
 
-                // 计算 6D 雅可比矩阵 (LOCAL frame to match log6 error)
-                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J);
+                // 计算完整 6xN 雅可比矩阵 (LOCAL frame to match log6 error)
+                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J_full);
+                
+                // 截取机械臂部分 (前 6 列)
+                J_arm = J_full.leftCols<common::ARM_JOINT_NUM>();
 
                 // 自适应阻尼
                 constexpr double base_lambda = 1e-3;
@@ -260,60 +277,62 @@ namespace yandy::modules
                 const double lambda_sq = adaptive_lambda * adaptive_lambda;
 
                 // 标准 DLS 求解: (J^T * J + lambda^2 * I) * v = J^T * err
-                H = J.transpose() * J;
+                H = J_arm.transpose() * J_arm;
                 H.diagonal().array() += lambda_sq;
-                g = J.transpose() * err;
+                g = J_arm.transpose() * err;
 
-                // 使用 LDLT 分解求解线性方程 (H 是对称正定的)
-                v = H.ldlt().solve(g);
+                // 使用 LDLT 分解求解线性方程
+                v_arm = H.ldlt().solve(g);
 
-                // 步长限制，防止发散
-                if (constexpr double max_step = 0.5; v.norm() > max_step)
+                // 步长限制
+                if (constexpr double max_step = 0.5; v_arm.norm() > max_step)
                 {
-                    v = v.normalized() * max_step;
+                    v_arm = v_arm.normalized() * max_step;
                 }
 
-                // 早停: 如果步长过小，说明已收敛到局部极小值
-                if (v.norm() < 1e-6)
+                // 早停
+                if (v_arm.norm() < 1e-6)
                 {
                     break;
                 }
 
-                // 更新关节角: q = q + v
-                pinocchio::integrate(m_model, q, v, q);
+                // 更新机械臂关节角
+                arm_q += v_arm;
 
-                // 简单的关节限位夹钳 (Clamping)
-                // 相比之前的 Active Set 策略，直接夹钳在 6-DoF 下通常更稳定且不易陷入死锁
-                q = q.cwiseMax(m_model.lowerPositionLimit).cwiseMin(m_model.upperPositionLimit);
+                // 关节限位夹钳 (只对机械臂关节)
+                for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
+                {
+                    arm_q[j] = std::clamp(arm_q[j], m_model.lowerPositionLimit[j], m_model.upperPositionLimit[j]);
+                }
             }
 
-            // 如果第一次尝试（使用猜测值）结果尚可，则不再尝试随机重启
-            // 避免在无法完美到达时跳变为随机解
+            // 如果第一次尝试结果尚可，则不再尝试随机重启
             if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol && !collision_detected)
             {
-                // 必须验证 best_q 是否碰撞
-                bool best_q_collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, best_q, true);
+                const common::VectorJ best_full_q = common::combineJoints(best_arm_q, m_current_gimbal_q);
+                bool best_q_collision = pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, best_full_q, true);
                 if (!best_q_collision)
                 {
-                    return tl::unexpected(best_q);
+                    return tl::unexpected(best_arm_q);
                 }
-                // 如果撞了，什么也不做，继续跑下一轮 restart 循环寻找安全解
             }
         }
 
-        return tl::unexpected(best_q);
+        return tl::unexpected(best_arm_q);
     }
 
     bool DynamicsSolver::checkPathCollision(
-        const common::VectorJ& q_start,
-        const common::VectorJ& q_goal,
+        const common::VectorArm& arm_q_start,
+        const common::VectorArm& arm_q_goal,
         int num_samples)
     {
         for (int i = 1; i <= num_samples; ++i)
         {
             const double t = static_cast<double>(i) / num_samples;
-            const common::VectorJ q_sample = (1.0 - t) * q_start + t * q_goal;
-            if (pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, q_sample, true))
+            const common::VectorArm arm_q_sample = (1.0 - t) * arm_q_start + t * arm_q_goal;
+            // 使用当前云台状态进行碰撞检测
+            const common::VectorJ full_q = common::combineJoints(arm_q_sample, m_current_gimbal_q);
+            if (pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true))
             {
                 return true;
             }
@@ -321,23 +340,21 @@ namespace yandy::modules
         return false;
     }
 
-    common::VectorJ DynamicsSolver::generateRandomJointPositions()
+    common::VectorArm DynamicsSolver::generateRandomArmPositions()
     {
-        common::VectorJ q;
-        // initialize to zeros (in case JOINT_NUM is large)
-        q.setZero();
+        common::VectorArm arm_q;
+        arm_q.setZero();
 
-        // thread-local RNG to avoid reseeding each call and to be safe in multithreaded contexts
         thread_local std::mt19937_64 rng{std::random_device{}()};
 
-        for (int i = 0; i < common::JOINT_NUM; ++i)
+        for (int i = 0; i < common::ARM_JOINT_NUM; ++i)
         {
             const double lower = m_model.lowerPositionLimit[i];
             const double upper = m_model.upperPositionLimit[i];
             std::uniform_real_distribution<double> dist(lower, upper);
-            q[i] = dist(rng);
+            arm_q[i] = dist(rng);
         }
 
-        return q;
+        return arm_q;
     }
 }
