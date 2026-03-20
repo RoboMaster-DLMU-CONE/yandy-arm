@@ -1,2 +1,3 @@
 add_subdirectory(dm_zeroing)
 add_subdirectory(gravity_comp_test)
+add_subdirectory(effector_test)
