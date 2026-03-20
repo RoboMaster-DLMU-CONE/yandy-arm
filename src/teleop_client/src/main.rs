@@ -187,6 +187,19 @@ fn main() {
     let mut desired_pitch: f32 = 0.0;
     let mut desired_yaw: f32 = 0.0;
 
+    // Gimbal state with URDF limits
+    let mut gimbal_z: f32 = 0.0;       // [0, 0.2] meters
+    let mut gimbal_yaw: f32 = 0.0;     // [-2.0, 2.0] rad
+    let mut gimbal_pitch: f32 = 0.0;   // [-0.3, 0.5] rad
+    const GIMBAL_Z_MIN: f32 = 0.0;
+    const GIMBAL_Z_MAX: f32 = 0.2;
+    const GIMBAL_YAW_MIN: f32 = -2.0;
+    const GIMBAL_YAW_MAX: f32 = 2.0;
+    const GIMBAL_PITCH_MIN: f32 = -0.3;
+    const GIMBAL_PITCH_MAX: f32 = 0.5;
+    const GIMBAL_Z_SPEED: f32 = 0.1;     // m/s
+    const GIMBAL_ROT_SPEED: f32 = 0.5;   // rad/s
+
     let mut current_pos = desired_pos;
     let mut current_roll = desired_roll;
     let mut current_pitch = desired_pitch;
@@ -341,6 +354,26 @@ fn main() {
             desired_pos += move_vec;
         }
 
+        // Gimbal controls: i/k -> gimbal_z +/-, j/l -> yaw -/+, u/o -> pitch -/+
+        if window.get_key(Key::I) == Action::Press {
+            gimbal_z = (gimbal_z + GIMBAL_Z_SPEED * dt).min(GIMBAL_Z_MAX);
+        }
+        if window.get_key(Key::K) == Action::Press {
+            gimbal_z = (gimbal_z - GIMBAL_Z_SPEED * dt).max(GIMBAL_Z_MIN);
+        }
+        if window.get_key(Key::J) == Action::Press {
+            gimbal_yaw = (gimbal_yaw - GIMBAL_ROT_SPEED * dt).max(GIMBAL_YAW_MIN);
+        }
+        if window.get_key(Key::L) == Action::Press {
+            gimbal_yaw = (gimbal_yaw + GIMBAL_ROT_SPEED * dt).min(GIMBAL_YAW_MAX);
+        }
+        if window.get_key(Key::U) == Action::Press {
+            gimbal_pitch = (gimbal_pitch - GIMBAL_ROT_SPEED * dt).max(GIMBAL_PITCH_MIN);
+        }
+        if window.get_key(Key::O) == Action::Press {
+            gimbal_pitch = (gimbal_pitch + GIMBAL_ROT_SPEED * dt).min(GIMBAL_PITCH_MAX);
+        }
+
         // Damping
         let alpha = (damping * dt).min(1.0);
         current_pos.coords = current_pos.coords.lerp(&desired_pos.coords, alpha);
@@ -390,6 +423,23 @@ fn main() {
             &kiss3d::text::Font::default(),
             &na::Point3::new(1.0, 1.0, 0.0),
         );
+        window.draw_text(
+            &format!(
+                "Gimbal: z={:.3} yaw={:.2} pitch={:.2}",
+                gimbal_z, gimbal_yaw, gimbal_pitch
+            ),
+            &na::Point2::new(10.0, 170.0),
+            40.0,
+            &kiss3d::text::Font::default(),
+            &na::Point3::new(0.5, 1.0, 1.0),
+        );
+        window.draw_text(
+            "[I/K] z  [J/L] yaw  [U/O] pitch",
+            &na::Point2::new(10.0, 210.0),
+            30.0,
+            &kiss3d::text::Font::default(),
+            &na::Point3::new(0.5, 0.5, 0.5),
+        );
 
         // UDP Send
         let packet = YandyControlPack {
@@ -399,6 +449,9 @@ fn main() {
             roll: current_roll,
             pitch: current_pitch,
             yaw: current_yaw,
+            gimbal_z,
+            gimbal_yaw,
+            gimbal_pitch,
             cmd: cmd_state.to_u8(),
         };
 

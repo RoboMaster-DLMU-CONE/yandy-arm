@@ -34,6 +34,9 @@ pub struct YandyControlPack {
     pub roll: f32,
     pub pitch: f32,
     pub yaw: f32,
+    pub gimbal_z: f32,
+    pub gimbal_yaw: f32,
+    pub gimbal_pitch: f32,
     pub cmd: u8,
 }
 
@@ -46,6 +49,9 @@ impl Default for YandyControlPack {
             roll: 0.0,
             pitch: 0.0,
             yaw: 0.0,
+            gimbal_z: 0.0,
+            gimbal_yaw: 0.0,
+            gimbal_pitch: 0.0,
             cmd: YandyControlCmd::None as u8,
         }
     }
