@@ -108,6 +108,12 @@ constexpr int ARM_JOINT_NUM = 6;    // 机械臂关节数 (由上位机控制)
 constexpr int GIMBAL_JOINT_NUM = 3; // 云台关节数 (状态从下位机读取)
 constexpr int JOINT_NUM = ARM_JOINT_NUM + GIMBAL_JOINT_NUM; // 总关节数
 
+// Pinocchio 关节顺序索引 (由 URDF 树结构决定):
+// q[0] = joint_1, q[1..3] = gimbal_joint_1/2/3, q[4..8] = joint_2..6
+// 因此: arm_indices = [0, 4, 5, 6, 7, 8], gimbal_indices = [1, 2, 3]
+constexpr int ARM_Q_INDICES[ARM_JOINT_NUM] = {0, 4, 5, 6, 7, 8};
+constexpr int GIMBAL_Q_INDICES[GIMBAL_JOINT_NUM] = {1, 2, 3};
+
 // 类型别名
 using VectorArm =
     Eigen::Matrix<double, ARM_JOINT_NUM, 1>; // 机械臂关节向量 (6D)
@@ -139,21 +145,36 @@ struct ArmCommand {
   VectorArm tau_ff{VectorArm::Zero()}; // 前馈力矩 (核心)
 };
 
-// 辅助函数: 组装完整关节向量
+// 辅助函数: 组装完整关节向量 (按 Pinocchio 顺序)
+// arm = [j1, j2, j3, j4, j5, j6] -> full[0,4,5,6,7,8]
+// gimbal = [z, yaw, pitch] -> full[1,2,3]
 inline VectorJ combineJoints(const VectorArm &arm, const VectorGimbal &gimbal) {
   VectorJ full;
-  full << arm, gimbal;
+  for (int i = 0; i < ARM_JOINT_NUM; ++i) {
+    full[ARM_Q_INDICES[i]] = arm[i];
+  }
+  for (int i = 0; i < GIMBAL_JOINT_NUM; ++i) {
+    full[GIMBAL_Q_INDICES[i]] = gimbal[i];
+  }
   return full;
 }
 
-// 辅助函数: 从完整向量中提取机械臂部分
+// 辅助函数: 从完整向量中提取机械臂部分 (按 Pinocchio 顺序)
 inline VectorArm extractArm(const VectorJ &full) {
-  return full.head<ARM_JOINT_NUM>();
+  VectorArm arm;
+  for (int i = 0; i < ARM_JOINT_NUM; ++i) {
+    arm[i] = full[ARM_Q_INDICES[i]];
+  }
+  return arm;
 }
 
-// 辅助函数: 从完整向量中提取云台部分
+// 辅助函数: 从完整向量中提取云台部分 (按 Pinocchio 顺序)
 inline VectorGimbal extractGimbal(const VectorJ &full) {
-  return full.tail<GIMBAL_JOINT_NUM>();
+  VectorGimbal gimbal;
+  for (int i = 0; i < GIMBAL_JOINT_NUM; ++i) {
+    gimbal[i] = full[GIMBAL_Q_INDICES[i]];
+  }
+  return gimbal;
 }
 
 } // namespace yandy::common

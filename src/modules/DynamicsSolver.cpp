@@ -268,8 +268,11 @@ namespace yandy::modules
                 // 计算完整 6xN 雅可比矩阵 (LOCAL frame to match log6 error)
                 pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::LOCAL, J_full);
                 
-                // 截取机械臂部分 (前 6 列)
-                J_arm = J_full.leftCols<common::ARM_JOINT_NUM>();
+                // 按正确的 Pinocchio 索引提取机械臂部分的雅可比列
+                for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
+                {
+                    J_arm.col(j) = J_full.col(common::ARM_Q_INDICES[j]);
+                }
 
                 // 自适应阻尼
                 constexpr double base_lambda = 1e-3;
@@ -299,10 +302,11 @@ namespace yandy::modules
                 // 更新机械臂关节角
                 arm_q += v_arm;
 
-                // 关节限位夹钳 (只对机械臂关节)
+                // 关节限位夹钳 (使用正确的 Pinocchio 索引)
                 for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
                 {
-                    arm_q[j] = std::clamp(arm_q[j], m_model.lowerPositionLimit[j], m_model.upperPositionLimit[j]);
+                    const int idx = common::ARM_Q_INDICES[j];
+                    arm_q[j] = std::clamp(arm_q[j], m_model.lowerPositionLimit[idx], m_model.upperPositionLimit[idx]);
                 }
             }
 
@@ -349,8 +353,9 @@ namespace yandy::modules
 
         for (int i = 0; i < common::ARM_JOINT_NUM; ++i)
         {
-            const double lower = m_model.lowerPositionLimit[i];
-            const double upper = m_model.upperPositionLimit[i];
+            const int idx = common::ARM_Q_INDICES[i];
+            const double lower = m_model.lowerPositionLimit[idx];
+            const double upper = m_model.upperPositionLimit[idx];
             std::uniform_real_distribution<double> dist(lower, upper);
             arm_q[i] = dist(rng);
         }

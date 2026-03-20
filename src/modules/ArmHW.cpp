@@ -46,7 +46,7 @@ public:
   }
 
   void read(common::ArmState &state) override {
-    for (int i = 0; i < common::JOINT_NUM; ++i) {
+    for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
       double raw_pos{}; // rad
       double raw_vel{}; // rad/s
       double raw_tau{}; // Nm
@@ -85,7 +85,7 @@ public:
   }
 
   void write(const common::ArmCommand &cmd) override {
-    for (int i = 0; i < common::JOINT_NUM; ++i) {
+    for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
       if (!m_motors[i])
         continue;
 
@@ -100,7 +100,7 @@ public:
 
   void enable() override {
     m_logger->info("Enabling all Arm motors...");
-    for (int i = 0; i < common::JOINT_NUM; ++i) {
+    for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
       if (!m_motors[i])
         continue;
       if (auto res = m_motors[i]->enable(); !res.has_value()) {
@@ -112,7 +112,7 @@ public:
 
   void disable() override {
     m_logger->info("Disabling all Arm motors...");
-    for (int i = 0; i < common::JOINT_NUM; ++i) {
+    for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
       if (!m_motors[i])
         continue;
       if (auto res = m_motors[i]->disable(); !res.has_value()) {
@@ -221,6 +221,7 @@ private:
 // ---------------------------------------------------------------------
 // FakeArmHW Implementation
 // Simulates full 9D robot internally, but only exposes 6D arm joints
+// Note: m_full_q uses Pinocchio joint ordering [j1, g1, g2, g3, j2..j6]
 // ---------------------------------------------------------------------
 class FakeArmHW : public IArmHW {
 public:
@@ -238,18 +239,20 @@ public:
     m_full_v = common::VectorJ::Zero();
 
     // 初始姿态 (机械臂)：避开奇异点，同时落在关节限位内
-    m_full_q.head<common::ARM_JOINT_NUM>() << 0.0, 0.6, 1.5, 0.0, 0.8, 0.0;
-    // 云台关节初始为 0
-    m_full_q.tail<common::GIMBAL_JOINT_NUM>().setZero();
+    // 使用 combineJoints 将逻辑顺序的机械臂状态转换为 Pinocchio 顺序
+    common::VectorArm init_arm_q;
+    init_arm_q << 0.0, 0.6, 1.5, 0.0, 0.8, 0.0;
+    common::VectorGimbal init_gimbal_q = common::VectorGimbal::Zero();
+    m_full_q = common::combineJoints(init_arm_q, init_gimbal_q);
 
     // 初始化 last_cmd (6D)，避免第一帧飞车
-    m_last_cmd.q_des = common::extractArm(m_full_q);
+    m_last_cmd.q_des = init_arm_q;
     m_last_cmd.kp.fill(20.0); // 提高刚度
     m_last_cmd.kd.fill(1.0);
   }
 
   void read(common::ArmState &out_state) override {
-    // 只返回机械臂部分 (前 6 个关节)
+    // 从 Pinocchio 顺序的 m_full_q 中提取机械臂部分
     out_state.q = common::extractArm(m_full_q);
     out_state.v = common::extractArm(m_full_v);
     out_state.tau = m_arm_tau;
@@ -263,16 +266,19 @@ public:
         pinocchio::rnea(m_sim_model, m_sim_data, m_full_q,
                         common::VectorJ::Zero(), common::VectorJ::Zero());
 
-    // 计算机械臂电机力矩 (MIT Mode) - 只针对前 6 个关节
+    // 计算机械臂电机力矩 (MIT Mode) - 只针对机械臂 6 个关节
     const common::VectorArm arm_q = common::extractArm(m_full_q);
     const common::VectorArm arm_v = common::extractArm(m_full_v);
     m_arm_tau = m_last_cmd.kp.cwiseProduct(m_last_cmd.q_des - arm_q) +
                 m_last_cmd.kd.cwiseProduct(m_last_cmd.v_des - arm_v) +
                 m_last_cmd.tau_ff;
 
-    // 组装完整力矩向量 (云台力矩为 0，假设云台由下位机控制)
+    // 组装完整力矩向量 (使用正确的 Pinocchio 索引)
+    // 机械臂关节有电机力矩，云台关节力矩为 0 (假设由下位机控制)
     common::VectorJ full_tau_motor = common::VectorJ::Zero();
-    full_tau_motor.head<common::ARM_JOINT_NUM>() = m_arm_tau;
+    for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
+      full_tau_motor[common::ARM_Q_INDICES[i]] = m_arm_tau[i];
+    }
 
     // 简化的物理积分 (F = ma)
     common::VectorJ inertia = common::VectorJ::Constant(0.2);
@@ -294,8 +300,8 @@ public:
 private:
   pinocchio::Model m_sim_model;
   pinocchio::Data m_sim_data;
-  common::VectorJ m_full_q;                               // 完整 9D 位置
-  common::VectorJ m_full_v;                               // 完整 9D 速度
+  common::VectorJ m_full_q;                               // 完整 9D 位置 (Pinocchio 顺序)
+  common::VectorJ m_full_v;                               // 完整 9D 速度 (Pinocchio 顺序)
   common::VectorArm m_arm_tau{common::VectorArm::Zero()}; // 机械臂力矩反馈
   common::ArmCommand m_last_cmd;
   std::shared_ptr<spdlog::logger> m_logger;

@@ -225,11 +225,12 @@ namespace yandy::modules
         auto space = std::make_shared<ob::RealVectorStateSpace>(DOF);
         ob::RealVectorBounds bounds(DOF);
 
-        // 从 Pinocchio model 读取机械臂关节限位 (前 6 个关节)
+        // 从 Pinocchio model 读取机械臂关节限位 (使用正确的 Pinocchio 索引)
         for (int i = 0; i < DOF; ++i)
         {
-            bounds.setLow(i, m_model.lowerPositionLimit[i]);
-            bounds.setHigh(i, m_model.upperPositionLimit[i]);
+            const int idx = common::ARM_Q_INDICES[i];
+            bounds.setLow(i, m_model.lowerPositionLimit[idx]);
+            bounds.setHigh(i, m_model.upperPositionLimit[idx]);
         }
         space->setBounds(bounds);
 
