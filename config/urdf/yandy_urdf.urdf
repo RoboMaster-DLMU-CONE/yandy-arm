@@ -9,17 +9,17 @@ Stephen Brawner (brawner@gmail.com)
     name="base_link">
     <inertial>
       <origin
-        xyz="0.0358893809745529 -0.0221497042600049 0.0647184449003854"
+        xyz="-0.0120579612801377 0.00115524592716393 0.081606428993926"
         rpy="0 0 0" />
       <mass
-        value="5.66689591232295" />
+        value="5.67931087390506" />
       <inertia
-        ixx="0.0156897638754432"
-        ixy="2.89869909744743E-07"
-        ixz="-8.60809414328832E-07"
-        iyy="0.0242244692916892"
-        iyz="9.75645777202438E-06"
-        izz="0.0289080690535534" />
+        ixx="0.015692111636683"
+        ixy="2.89870234035569E-07"
+        ixz="-1.13959116449691E-06"
+        iyy="0.0242287755993516"
+        iyz="9.97786206944061E-06"
+        izz="0.0289136871803881" />
     </inertial>
     <visual>
       <origin
@@ -32,7 +32,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+          rgba="0.894117647058823 0.894117647058823 0.894117647058823 1" />
       </material>
     </visual>
     <collision>
@@ -72,17 +72,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_1">
     <inertial>
       <origin
-        xyz="0.00120128599198002 0.0337771047034724 0.07247421110189"
+        xyz="0.0073854 0.021171 0.09645"
         rpy="0 0 0" />
       <mass
-        value="1.44819766694536" />
+        value="0.80797" />
       <inertia
-        ixx="0.00308654902466829"
-        ixy="-1.92336869961938E-06"
-        ixz="-1.18107010856862E-07"
-        iyy="0.00351993825377993"
-        iyz="-2.81171200070315E-07"
-        izz="0.00123087646824348" />
+        ixx="0.0014673"
+        ixy="3.2317E-08"
+        ixz="-1.8304E-09"
+        iyy="0.0019316"
+        iyz="-1.9157E-06"
+        izz="0.00083549" />
     </inertial>
     <visual>
       <origin
@@ -95,7 +95,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.866666666666667 0.909803921568627 1 1" />
+          rgba="1 1 1 1" />
       </material>
     </visual>
     <collision>
@@ -130,17 +130,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_2">
     <inertial>
       <origin
-        xyz="0.100900513314298 0.0143258516877563 0.043109209494431"
+        xyz="0.1009 0.014326 0.043109"
         rpy="0 0 0" />
       <mass
-        value="1.01543198954596" />
+        value="1.0154" />
       <inertia
-        ixx="0.000912503408608008"
-        ixy="-0.000492616872738627"
-        ixz="-6.99065340786467E-09"
-        iyy="0.00363006838481718"
-        iyz="-7.27266054120355E-09"
-        izz="0.00397060930491578" />
+        ixx="0.0009125"
+        ixy="-0.00049262"
+        ixz="-6.9907E-09"
+        iyy="0.0036301"
+        iyz="-7.2727E-09"
+        izz="0.0039706" />
     </inertial>
     <visual>
       <origin
@@ -153,7 +153,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="1 0.549019607843137 0 1" />
+          rgba="1 0.54902 0 1" />
       </material>
     </visual>
     <collision>
@@ -188,17 +188,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_3">
     <inertial>
       <origin
-        xyz="0.0416134688782345 0.0591865944856609 0.0371759236044524"
+        xyz="0.041263 0.058869 0.037199"
         rpy="0 0 0" />
       <mass
-        value="1.3087461829584" />
+        value="1.3016" />
       <inertia
-        ixx="0.0020189555663457"
-        ixy="-0.00100348930161565"
-        ixz="2.70165784644995E-08"
-        iyy="0.00181123479251691"
-        iyz="8.07359526072103E-08"
-        izz="0.00337508479536761" />
+        ixx="0.002018"
+        ixy="-0.0010035"
+        ixz="2.7017E-08"
+        iyy="0.0018102"
+        iyz="8.0736E-08"
+        izz="0.003375" />
     </inertial>
     <visual>
       <origin
@@ -211,7 +211,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="1 0.549019607843137 0 1" />
+          rgba="1 0.54902 0 1" />
       </material>
     </visual>
     <collision>
@@ -260,17 +260,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_4">
     <inertial>
       <origin
-        xyz="-1.21998585161376E-05 0.00140300397508433 -0.0059179091233469"
+        xyz="-4.47512487872226E-06 0.00140429517460233 0.00208208843286019"
         rpy="0 0 0" />
       <mass
-        value="0.479732829832372" />
+        value="0.479732876616794" />
       <inertia
-        ixx="0.000200661027138766"
-        ixy="-5.33379268405502E-07"
-        ixz="8.1242460623188E-08"
-        iyy="0.000211564027968875"
-        iyz="1.56533802785616E-06"
-        izz="0.000283482547086752" />
+        ixx="0.000200643204541696"
+        ixy="-5.15759904527282E-07"
+        ixz="7.22790636562592E-08"
+        iyy="0.000211581942695979"
+        iyz="1.56323345737214E-06"
+        izz="0.000283482633570141" />
     </inertial>
     <visual>
       <origin
@@ -283,7 +283,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.866666666666667 0.909803921568627 1 1" />
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
     <collision>
@@ -318,17 +318,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_5">
     <inertial>
       <origin
-        xyz="0.0432563888639942 -0.000103178221333794 0.0332851366903483"
+        xyz="0.00671551505793594 7.79157302174538E-05 0.0199852126166533"
         rpy="0 0 0" />
       <mass
-        value="0.829074880083356" />
+        value="0.563264780449047" />
       <inertia
-        ixx="0.000261517869575779"
-        ixy="5.48281524607387E-07"
-        ixz="-1.59067348925722E-07"
-        iyy="0.000434479926841486"
-        iyz="2.40009595411019E-07"
-        izz="0.000517620897315582" />
+        ixx="0.000193087643180492"
+        ixy="3.89929720475858E-07"
+        ixz="-2.97118086309545E-07"
+        iyy="0.000183034056557076"
+        iyz="1.73111549425671E-07"
+        izz="0.000260313372233933" />
     </inertial>
     <visual>
       <origin
@@ -341,7 +341,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.137254901960784 0.188235294117647 1 1" />
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
     <collision>
@@ -376,17 +376,17 @@ Stephen Brawner (brawner@gmail.com)
     name="link_6">
     <inertial>
       <origin
-        xyz="0.014302215240411 -0.0576306571357226 -0.0232936504987501"
+        xyz="0.00134936362268262 -1.03398165501867E-07 0.0678306571357125"
         rpy="0 0 0" />
       <mass
         value="0.452418521071107" />
       <inertia
-        ixx="0.000130209544601984"
-        ixy="-1.06109516274456E-10"
-        ixz="-5.29761390523097E-05"
-        iyy="0.000291789363663892"
-        iyz="1.0690996894176E-09"
-        izz="0.000222984319140339" />
+        ixx="0.000246941384951606"
+        ixy="3.1494328637835E-06"
+        ixz="1.0249267419736E-09"
+        iyy="0.000106252478790717"
+        iyz="-3.22115738138909E-10"
+        izz="0.000291789363663892" />
     </inertial>
     <visual>
       <origin
@@ -427,6 +427,180 @@ Stephen Brawner (brawner@gmail.com)
     <limit
       lower="-6.28"
       upper="6.28"
+      effort="50"
+      velocity="8" />
+  </joint>
+  <link
+    name="gimbal_link_1">
+    <inertial>
+      <origin
+        xyz="-0.0043646 0.018922 0.17276"
+        rpy="0 0 0" />
+      <mass
+        value="0.28493" />
+      <inertia
+        ixx="0.0013584"
+        ixy="-1.869E-06"
+        ixz="-1.0256E-07"
+        iyy="0.0013558"
+        iyz="-5.447E-08"
+        izz="2.0063E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.77647 0.75686 0.73725 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="gimbal_joint_1"
+    type="prismatic">
+    <origin
+      xyz="0.031 0.06 0.0298"
+      rpy="0 0 0" />
+    <parent
+      link="link_1" />
+    <child
+      link="gimbal_link_1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0.2"
+      effort="50"
+      velocity="8" />
+  </joint>
+  <link
+    name="gimbal_link_2">
+    <inertial>
+      <origin
+        xyz="0.00011928 -0.0058782 0.019225"
+        rpy="0 0 0" />
+      <mass
+        value="0.015494" />
+      <inertia
+        ixx="1.8063E-06"
+        ixy="1.5254E-08"
+        ixz="-1.4743E-08"
+        iyy="1.7062E-06"
+        iyz="-5.2126E-08"
+        izz="2.9984E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89412 0.89412 0.89412 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="gimbal_joint_2"
+    type="revolute">
+    <origin
+      xyz="0.01505 0.037 0.2921"
+      rpy="0 0 0" />
+    <parent
+      link="gimbal_link_1" />
+    <child
+      link="gimbal_link_2" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.0"
+      upper="2.0"
+      effort="50"
+      velocity="8" />
+  </joint>
+  <link
+    name="gimbal_link_3">
+    <inertial>
+      <origin
+        xyz="-0.017733 0.027819 -0.017718"
+        rpy="0 0 0" />
+      <mass
+        value="0.065739" />
+      <inertia
+        ixx="1.6327E-05"
+        ixy="-2.6032E-07"
+        ixz="2.7099E-07"
+        iyy="5.8487E-05"
+        iyz="1.2429E-07"
+        izz="4.9121E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.35686 0.27059 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/gimbal_link_3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="gimbal_joint_3"
+    type="revolute">
+    <origin
+      xyz="0.007 -0.023 0.0227"
+      rpy="1.5708 0 0" />
+    <parent
+      link="gimbal_link_2" />
+    <child
+      link="gimbal_link_3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.3"
+      upper="0.5"
       effort="50"
       velocity="8" />
   </joint>
