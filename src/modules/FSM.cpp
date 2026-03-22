@@ -49,6 +49,7 @@ void YandyArmFSM::processCmd(const YandyControlCmd cmd) {
   case CMD_DEC_STORE:
     m_fsm.process_event(Event<by_name("CMD_DEC_STORE")>{});
     break;
+  // CMD_POSE_STABLE, CMD_PREGRASP_DONE, CMD_GRASP_DONE 由 Robot 层处理
   default:
     break;
   }
@@ -70,10 +71,12 @@ YandyState YandyArmFSM::getState() const {
 
 // PUML produces 2 orthogonal regions:
 //   region[0]: Operational / ErrorMode  (outer layer)
-//   region[1]: Disabled / ManualControl / FetchingMode / StorageMode (inner
-//   layer)
+//   region[1]: Disabled / ManualControl / FetchingMode / StorageMode (inner layer)
 // The IDs below are derived at compile time from the transition table,
 // so they stay correct even if the PUML is modified.
+// 
+// 注意: FetchingMode 内部的子阶段 (Seeking/PreGrasp/Approaching) 由 Robot 层面
+// 使用 m_fetch_phase 变量管理，不使用 MSM 子状态机制。
 void YandyArmFSM::sync_state() {
   const int *cs = m_fsm.current_state();
 
@@ -83,15 +86,17 @@ void YandyArmFSM::sync_state() {
   }
 
   const int inner = cs[1];
-  if (inner == id_of<by_name("Disabled")>)
+  if (inner == id_of<by_name("Disabled")>) {
     m_current_state.store(YandyState::Disabled, std::memory_order_release);
-  else if (inner == id_of<by_name("ManualControl")>)
+  } else if (inner == id_of<by_name("ManualControl")>) {
     m_current_state.store(YandyState::Manual, std::memory_order_release);
-  else if (inner == id_of<by_name("FetchingMode")>)
+  } else if (inner == id_of<by_name("FetchingMode")>) {
+    // FetchingMode 的子阶段由 Robot 层管理
     m_current_state.store(YandyState::Fetching, std::memory_order_release);
-  else if (inner == id_of<by_name("StorageMode")>)
+  } else if (inner == id_of<by_name("StorageMode")>) {
     m_current_state.store(YandyState::Store, std::memory_order_release);
-  else
+  } else {
     m_current_state.store(YandyState::Unknown, std::memory_order_release);
+  }
 }
 } // namespace yandy::modules

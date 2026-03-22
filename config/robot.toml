@@ -5,3 +5,7 @@ simulate = true
 [simulate_camera]
 translation = [0.4, -0.4, 0.6]
 rpy = [-1.7, 0.0, 0.0]
+
+[simulate_rerun]
+ip = "127.0.0.1"
+port = 9876

@@ -67,8 +67,40 @@ namespace boost::msm::front::puml
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
             fsm.m_logger->info("启动视觉抓取流程...");
-            fsm.m_logger->info("[提示] 请操作摇杆微调位置，再次发送指令以抓取。");
+            if (fsm.callbacks.on_enter_fetch) fsm.callbacks.on_enter_fetch();
             if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
+        }
+    };
+
+    template <>
+    struct Action<by_name("lock_target")>
+    {
+        template <class EVT, class FSM, class S, class T>
+        void operator()(EVT const&, FSM& fsm, S&, T&)
+        {
+            fsm.m_logger->info("目标位姿已锁定，移动到预抓取点...");
+        }
+    };
+
+    template <>
+    struct Action<by_name("start_approach")>
+    {
+        template <class EVT, class FSM, class S, class T>
+        void operator()(EVT const&, FSM& fsm, S&, T&)
+        {
+            fsm.m_logger->info("到达预抓取点，开始直线逼近...");
+        }
+    };
+
+    template <>
+    struct Action<by_name("grasp_complete")>
+    {
+        template <class EVT, class FSM, class S, class T>
+        void operator()(EVT const&, FSM& fsm, S&, T&)
+        {
+            fsm.m_logger->info("到达抓取位置，闭合夹爪");
+            if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
+            fsm.mineral_attached = true;
         }
     };
 
@@ -78,19 +110,7 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            // TODO: replace with fsm.check_grip_sensor()
-            bool success = true;
-            if (success)
-            {
-                fsm.mineral_attached = true;
-                fsm.m_logger->info("抓取成功！已返回原位");
-                if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
-            }
-            else
-            {
-                fsm.mineral_attached = false;
-                fsm.m_logger->warn("传感器未检测到物体！抓取失败，已返回。");
-            }
+            fsm.m_logger->info("退出抓取模式，返回手动控制");
         }
     };
 
@@ -309,6 +329,7 @@ namespace yandy::modules
             std::function<void()> on_close_claw;
             std::function<void()> on_brake;
             std::function<void(int pose_index)> on_enter_store;
+            std::function<void()> on_enter_fetch;  // 进入抓取模式时调用 (重置状态)
         };
 
         class YandyArmFSMDef : public msm::front::state_machine_def<YandyArmFSMDef>

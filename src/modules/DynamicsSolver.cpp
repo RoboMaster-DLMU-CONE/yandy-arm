@@ -325,6 +325,204 @@ namespace yandy::modules
         return tl::unexpected(best_arm_q);
     }
 
+    tl::expected<common::VectorArm, common::VectorArm> DynamicsSolver::solveIK5DoF(
+        const Eigen::Vector3d& target_position,
+        const Eigen::Vector3d& approach_direction,
+        const common::VectorArm& arm_q_guess,
+        double tol,
+        int max_iter)
+    {
+        constexpr int MAX_RETRIES = 5;
+        common::VectorArm best_arm_q = arm_q_guess;
+        double min_err = 1e9;
+
+        // 归一化逼近方向
+        const Eigen::Vector3d z_des = approach_direction.normalized();
+
+        // 预分配计算变量
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, 1> v_arm;
+        Eigen::Matrix<double, 6, common::JOINT_NUM> J_full;
+        Eigen::Matrix<double, 6, common::ARM_JOINT_NUM> J_arm;
+        Eigen::Matrix<double, 5, common::ARM_JOINT_NUM> J_5dof;  // 5DoF 雅可比
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, common::ARM_JOINT_NUM> H;
+        Eigen::Matrix<double, common::ARM_JOINT_NUM, 1> g;
+        Eigen::Matrix<double, 5, 1> err_5dof;
+
+        for (int restart = 0; restart < MAX_RETRIES; ++restart)
+        {
+            common::VectorArm arm_q = (restart == 0) ? arm_q_guess : generateRandomArmPositions();
+            bool collision_detected = false;
+
+            for (int i = 0; i < max_iter; ++i)
+            {
+                const common::VectorJ full_q = common::combineJoints(arm_q, m_current_gimbal_q);
+
+                pinocchio::computeJointJacobians(m_model, m_data, full_q);
+                pinocchio::updateFramePlacements(m_model, m_data);
+
+                // 获取当前末端位姿
+                const pinocchio::SE3& oMcurr = m_data.oMf[m_tcp_frame_id];
+                const Eigen::Vector3d p_curr = oMcurr.translation();
+                const Eigen::Matrix3d R_curr = oMcurr.rotation();
+                const Eigen::Vector3d z_curr = R_curr.col(2);  // 末端 Z 轴
+
+                // 计算 5D 误差:
+                // [0-2]: 位置误差 (世界系)
+                // [3-4]: 方向误差 (用叉积的 x, y 分量表示 Z 轴偏差)
+                const Eigen::Vector3d pos_err = target_position - p_curr;
+                
+                // 方向误差: z_curr × z_des 给出旋转轴和角度的 sin
+                // 只取 x, y 分量 (在世界系下) 来约束 roll, pitch
+                // 当 z_curr ≈ z_des 时，叉积趋近于零
+                const Eigen::Vector3d ori_cross = z_curr.cross(z_des);
+
+                err_5dof.head<3>() = pos_err;
+                err_5dof[3] = ori_cross[0];  // 绕世界 X 轴的偏差
+                err_5dof[4] = ori_cross[1];  // 绕世界 Y 轴的偏差
+                // 注意: ori_cross[2] 对应 yaw 偏差，我们故意忽略它
+
+                const double current_err_norm = err_5dof.norm();
+                if (current_err_norm < min_err)
+                {
+                    min_err = current_err_norm;
+                    best_arm_q = arm_q;
+                }
+
+                // 收敛判断
+                if (current_err_norm < tol)
+                {
+                    bool collision = pinocchio::computeCollisions(
+                        m_model, m_data, m_geom_model, m_geom_data, full_q, true);
+                    if (!collision)
+                    {
+                        return arm_q;
+                    }
+                    else
+                    {
+                        collision_detected = true;
+                        break;
+                    }
+                }
+
+                // 获取世界系雅可比 (6 x 9)
+                pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id, pinocchio::WORLD, J_full);
+
+                // 提取机械臂部分 (6 x 6)
+                for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
+                {
+                    J_arm.col(j) = J_full.col(common::ARM_Q_INDICES[j]);
+                }
+
+                // 构建 5DoF 雅可比:
+                // 前 3 行: 位置雅可比 (直接使用)
+                // 后 2 行: 方向雅可比 (从角速度到 z 轴变化率的映射)
+                //
+                // d(z_curr)/dt = omega × z_curr
+                // d(z_curr × z_des)/dt = (omega × z_curr) × z_des
+                //                      = omega (z_curr · z_des) - z_curr (omega · z_des)
+                //                      = [z_des × z_curr]_× omega + (z_curr · z_des) omega
+                // 取 x, y 分量: 投影到世界 X, Y 轴
+                //
+                // 简化: 当 z_curr ≈ z_des 时，d(cross)/dt ≈ [0 0 -1; 0 0 0; 1 0 0] @ d(z_curr)/dt 的变化
+                // 更直接的方法: 使用角速度雅可比的前两行 (绕世界 X, Y 轴的角速度)
+                
+                J_5dof.topRows<3>() = J_arm.topRows<3>();  // 位置雅可比
+                
+                // 方向雅可比: 我们需要 d(err_5dof[3:5])/d(q)
+                // err[3] = (z_curr × z_des).x = z_curr.y * z_des.z - z_curr.z * z_des.y
+                // err[4] = (z_curr × z_des).y = z_curr.z * z_des.x - z_curr.x * z_des.z
+                //
+                // d(z_curr)/d(q) 需要从角速度雅可比推导:
+                // z_curr = R_curr * [0,0,1]^T
+                // d(z_curr) = [omega]_× * z_curr, 其中 omega = J_ang * dq
+                //
+                // 因此 d(err[3])/d(q) 和 d(err[4])/d(q) 可以通过链式法则计算
+                // 但为了简化，我们使用近似：当 z_curr ≈ z_des 时，
+                // 角速度雅可比的 (wx, wy) 分量直接对应 roll/pitch 变化
+                
+                // 更精确的做法：直接计算
+                const Eigen::Matrix<double, 3, common::ARM_JOINT_NUM> J_ang = J_arm.bottomRows<3>();
+                
+                // d(z_curr)/d(q) = [z_curr]_× * J_ang^T 的转置 = -[z_curr]_× * J_ang
+                // 其中 [z_curr]_× 是反对称矩阵
+                Eigen::Matrix3d z_curr_skew;
+                z_curr_skew <<  0,        -z_curr[2],  z_curr[1],
+                                z_curr[2], 0,         -z_curr[0],
+                               -z_curr[1], z_curr[0],  0;
+                
+                // d(z_curr)/d(q) 是 3 x 6 矩阵
+                const Eigen::Matrix<double, 3, common::ARM_JOINT_NUM> dz_dq = z_curr_skew * J_ang;
+                
+                // d(z_curr × z_des)/d(q)
+                // = d(z_curr)/d(q) × z_des (叉积逐列进行)
+                // 取 x, y 分量
+                Eigen::Matrix3d z_des_skew;
+                z_des_skew <<  0,        -z_des[2],  z_des[1],
+                               z_des[2],  0,        -z_des[0],
+                              -z_des[1],  z_des[0],  0;
+                
+                // d(cross)/d(q) = -[z_des]_× * d(z_curr)/d(q)
+                const Eigen::Matrix<double, 3, common::ARM_JOINT_NUM> dcross_dq = -z_des_skew * dz_dq;
+                
+                // 只取 x, y 行
+                J_5dof.row(3) = dcross_dq.row(0);
+                J_5dof.row(4) = dcross_dq.row(1);
+
+                // 自适应阻尼 DLS
+                constexpr double base_lambda = 1e-3;
+                const double adaptive_lambda = base_lambda + 0.05 * current_err_norm;
+                const double lambda_sq = adaptive_lambda * adaptive_lambda;
+
+                // (J^T J + λ²I) v = J^T err
+                H = J_5dof.transpose() * J_5dof;
+                H.diagonal().array() += lambda_sq;
+                g = J_5dof.transpose() * err_5dof;
+
+                // 添加次要目标：最小化关节移动量 (在零空间中)
+                // v = v_primary + (I - J^+ J) * v_secondary
+                // 这里简化为在 H 中添加小的正则项，偏向 q_guess
+                constexpr double null_space_weight = 0.01;
+                g += null_space_weight * (arm_q_guess - arm_q);
+
+                v_arm = H.ldlt().solve(g);
+
+                // 步长限制
+                if (constexpr double max_step = 0.5; v_arm.norm() > max_step)
+                {
+                    v_arm = v_arm.normalized() * max_step;
+                }
+
+                if (v_arm.norm() < 1e-6)
+                {
+                    break;
+                }
+
+                arm_q += v_arm;
+
+                // 关节限位
+                for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
+                {
+                    const int idx = common::ARM_Q_INDICES[j];
+                    arm_q[j] = std::clamp(arm_q[j], m_model.lowerPositionLimit[idx], m_model.upperPositionLimit[idx]);
+                }
+            }
+
+            // 宽松收敛判断
+            if (constexpr double loose_tol = 1e-2; restart == 0 && min_err < loose_tol && !collision_detected)
+            {
+                const common::VectorJ best_full_q = common::combineJoints(best_arm_q, m_current_gimbal_q);
+                bool best_q_collision = pinocchio::computeCollisions(
+                    m_model, m_data, m_geom_model, m_geom_data, best_full_q, true);
+                if (!best_q_collision)
+                {
+                    return tl::unexpected(best_arm_q);
+                }
+            }
+        }
+
+        return tl::unexpected(best_arm_q);
+    }
+
     bool DynamicsSolver::checkPathCollision(
         const common::VectorArm& arm_q_start,
         const common::VectorArm& arm_q_goal,

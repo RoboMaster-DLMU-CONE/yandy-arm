@@ -69,6 +69,27 @@ namespace yandy::modules
         );
 
         /**
+         * @brief 5DoF 逆运动学求解 (位置 + 逼近方向，yaw 自由)
+         *
+         * 用于圆柱形矿石抓取场景：只约束末端位置和逼近方向（末端 Z 轴对齐目标法向），
+         * yaw（绕末端 Z 轴旋转）自由浮动，利用这个自由度最小化关节移动量。
+         *
+         * @param target_position   目标位置 (基座坐标系)
+         * @param approach_direction 逼近方向/目标法向量 (单位向量，基座坐标系)
+         * @param arm_q_guess       猜测的机械臂初始角度
+         * @param tol               误差容忍度 (位置: m, 方向: rad)
+         * @param max_iter          最大迭代次数
+         * @return 收敛时返回机械臂关节角；未收敛时在 error 中返回最佳近似解
+         */
+        tl::expected<common::VectorArm, common::VectorArm> solveIK5DoF(
+            const Eigen::Vector3d& target_position,
+            const Eigen::Vector3d& approach_direction,
+            const common::VectorArm& arm_q_guess,
+            double tol = 1e-4,
+            int max_iter = 100
+        );
+
+        /**
          * @brief 检查两个机械臂构型之间的直线路径是否存在碰撞
          *
          * 在 arm_q_start 和 arm_q_goal 之间线性插值 num_samples 个点，

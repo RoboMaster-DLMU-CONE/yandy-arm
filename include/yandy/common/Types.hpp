@@ -20,6 +20,11 @@ enum class YandyControlCmd : uint8_t {
   // === 手动操作指令 ===
   CMD_SWITCH_GRIP = 0x20, // 手动切换夹爪 (Gripper Toggle)
 
+  // === 抓取流程内部指令 (由 Robot 自动触发) ===
+  CMD_POSE_STABLE = 0x30,    // 视觉测量稳定 (Seeking -> PreGrasp)
+  CMD_PREGRASP_DONE = 0x31,  // 到达预抓取点 (PreGrasp -> Approaching)
+  CMD_GRASP_DONE = 0x32,     // 完成抓取 (Approaching -> exit)
+
   // === 调试/修正指令 ===
   CMD_TOGGLE_HELD = 0x80, // 强制修改“持有矿石”状态
   CMD_INC_STORE = 0x81,   // 强制库存 +1
@@ -70,6 +75,12 @@ constexpr std::string_view format_as(const YandyControlCmd c) {
     return "SWITCH_STORE";
   case YandyControlCmd::CMD_SWITCH_GRIP:
     return "SWITCH_GRIP";
+  case YandyControlCmd::CMD_POSE_STABLE:
+    return "POSE_STABLE";
+  case YandyControlCmd::CMD_PREGRASP_DONE:
+    return "PREGRASP_DONE";
+  case YandyControlCmd::CMD_GRASP_DONE:
+    return "GRASP_DONE";
   case YandyControlCmd::CMD_TOGGLE_HELD:
     return "TOGGLE_HELD";
   case YandyControlCmd::CMD_INC_STORE:

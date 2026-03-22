@@ -52,6 +52,7 @@ state YandyArm {
 
         state FetchingMode {
             ' [FETCH状态]
+            ' 子阶段由 Robot 层面的逻辑控制，不使用 MSM 子状态
         }
 
         state StorageMode {
