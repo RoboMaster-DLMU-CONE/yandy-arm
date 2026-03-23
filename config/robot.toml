@@ -32,3 +32,7 @@ stability_window = 10       # 稳定性检测窗口 (帧数)
 stability_threshold = 0.005 # 位置方差阈值 (m)
 pregrasp_distance = 0.1     # 预抓取距离 (m)
 approach_speed = 0.1        # 逼近速度 (m/s)
+extract_distance = 0.08     # 提取距离：抓取后沿提取方向移动的距离 (m)
+# 提取方向 (世界坐标系，单位向量，会自动归一化)
+# 默认为世界 -Z 方向（向下），即从竖直圆柱容器中向下取出能量单元
+extract_direction = [0.0, 0.0, -1.0]

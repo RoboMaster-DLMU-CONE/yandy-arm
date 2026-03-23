@@ -130,13 +130,25 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         fetch["pregrasp_distance"].value<double>().value_or(m_pregrasp_distance);
     m_approach_speed =
         fetch["approach_speed"].value<double>().value_or(m_approach_speed);
+    m_extract_distance =
+        fetch["extract_distance"].value<double>().value_or(m_extract_distance);
+    if (auto dir_arr = fetch["extract_direction"].as_array();
+        dir_arr && dir_arr->size() == 3) {
+      m_extract_direction =
+          Eigen::Vector3d(dir_arr->get(0)->value<double>().value(),
+                          dir_arr->get(1)->value<double>().value(),
+                          dir_arr->get(2)->value<double>().value())
+              .normalized();
+    }
     m_current_standoff = m_pregrasp_distance;
   }
   m_logger->info(
       "Fetch params: stability_window={}, stability_threshold={:.4f}, "
-      "pregrasp_distance={:.3f}, approach_speed={:.3f}",
+      "pregrasp_distance={:.3f}, approach_speed={:.3f}, "
+      "extract_distance={:.3f}, extract_direction=[{:.3f},{:.3f},{:.3f}]",
       m_stability_window, m_stability_threshold, m_pregrasp_distance,
-      m_approach_speed);
+      m_approach_speed, m_extract_distance,
+      m_extract_direction.x(), m_extract_direction.y(), m_extract_direction.z());
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -473,6 +485,9 @@ void yandy::Robot::handleFetching() {
   case FetchPhase::Approaching:
     handleApproaching();
     break;
+  case FetchPhase::Extracting:
+    handleExtracting();
+    break;
   case FetchPhase::Withdrawing:
     handleWithdrawing();
     break;
@@ -579,29 +594,50 @@ void yandy::Robot::handleApproaching() {
     m_logger->info("Reached grasp target, closing claw");
     m_effector.closeClaw();
 
-    // 切换到 Withdrawing 阶段
-    m_fetch_phase = FetchPhase::Withdrawing;
-    m_logger->info("Grasp complete, starting withdrawal...");
+    m_current_extract_offset = 0.0;
+    m_fetch_phase = FetchPhase::Extracting;
+    m_logger->info("Grasp complete, starting extraction along [{:.3f},{:.3f},{:.3f}]...",
+                   m_extract_direction.x(), m_extract_direction.y(),
+                   m_extract_direction.z());
   }
 }
 
-void yandy::Robot::handleWithdrawing() {
-  // 直线撤回：逐步增加 standoff 距离
-  m_current_standoff += m_approach_speed * DT;
-
-  if (m_current_standoff >= m_pregrasp_distance) {
-    m_current_standoff = m_pregrasp_distance;
+void yandy::Robot::handleExtracting() {
+  // 沿提取方向逐步移动，将能量单元从容器中取出
+  m_current_extract_offset += m_approach_speed * DT;
+  if (m_current_extract_offset > m_extract_distance) {
+    m_current_extract_offset = m_extract_distance;
   }
 
   const Eigen::Vector3d current_target =
-      m_locked_target_pos - m_locked_approach_dir * m_current_standoff;
+      m_locked_target_pos + m_extract_direction * m_current_extract_offset;
 
   if (!solveAndPlan5DoF(current_target, m_locked_approach_dir)) {
     return;
   }
 
+  if (m_current_extract_offset >= m_extract_distance && m_planner->isFinished()) {
+    m_logger->info("Extraction complete ({:.3f}m along [{:.3f},{:.3f},{:.3f}]), "
+                   "starting withdrawal...",
+                   m_extract_distance,
+                   m_extract_direction.x(), m_extract_direction.y(),
+                   m_extract_direction.z());
+    m_fetch_phase = FetchPhase::Withdrawing;
+  }
+}
+
+void yandy::Robot::handleWithdrawing() {
+  // 撤回到预抓取点（直接规划，不受 standoff 约束）
+  const Eigen::Vector3d pregrasp_pos =
+      m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
+
+  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
+    return;
+  }
+
   // 检查是否完成撤回
-  if (m_current_standoff >= m_pregrasp_distance && m_planner->isFinished()) {
+  const Eigen::Vector3d ee_pos = m_solver.getEndEffectorPose().translation();
+  if ((ee_pos - pregrasp_pos).norm() < 0.02 && m_planner->isFinished()) {
     m_logger->info("Withdrawal complete, exiting fetch mode");
 
     // 仿真模式下随机生成下一个能量单元位姿
@@ -618,6 +654,7 @@ void yandy::Robot::resetFetchState() {
   m_fetch_phase = FetchPhase::Seeking;
   m_pose_history.clear();
   m_current_standoff = m_pregrasp_distance;
+  m_current_extract_offset = 0.0;
   m_locked_target_pos.setZero();
   m_locked_approach_dir = Eigen::Vector3d::UnitZ();
 }

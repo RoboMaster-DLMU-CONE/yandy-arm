@@ -104,13 +104,15 @@ private:
   int m_store_pose_index{0};    // 当前存取矿位姿索引 (由 FSM 回调设置)
 
   // ---- 抓取流程状态 ----
-  enum class FetchPhase { Seeking, PreGrasp, Approaching, Withdrawing };
+  enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
 
   int m_stability_window{10};          // 稳定性检测窗口 (帧数)
   double m_stability_threshold{0.005}; // 位置方差阈值 (m)
   double m_pregrasp_distance{0.05};    // 预抓取距离 (m)
   double m_approach_speed{0.05};       // 逼近速度 (m/s)
+  double m_extract_distance{0.05};     // 提取距离 (m)
+  Eigen::Vector3d m_extract_direction{0.0, 0.0, -1.0}; // 提取方向 (世界坐标系)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
   Eigen::Vector3d m_locked_target_pos{
@@ -118,6 +120,7 @@ private:
   Eigen::Vector3d m_locked_approach_dir{
       Eigen::Vector3d::UnitZ()};                // 锁定的逼近方向
   double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
+  double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
 
   // ---- 私有方法 ----
   void visionLoop();
@@ -129,6 +132,7 @@ private:
   void handleSeeking();
   void handlePreGrasp();
   void handleApproaching();
+  void handleExtracting();
   void handleWithdrawing();
   void resetFetchState(); // 重置抓取状态 (进入/退出 FetchingMode 时调用)
 
