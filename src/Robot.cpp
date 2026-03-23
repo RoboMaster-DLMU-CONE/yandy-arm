@@ -119,6 +119,24 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
       }
     }
   }
+
+  // 读取抓取参数
+  if (auto fetch = tbl["fetch"]) {
+    m_stability_window =
+        fetch["stability_window"].value<int>().value_or(m_stability_window);
+    m_stability_threshold = fetch["stability_threshold"].value<double>().value_or(
+        m_stability_threshold);
+    m_pregrasp_distance =
+        fetch["pregrasp_distance"].value<double>().value_or(m_pregrasp_distance);
+    m_approach_speed =
+        fetch["approach_speed"].value<double>().value_or(m_approach_speed);
+    m_current_standoff = m_pregrasp_distance;
+  }
+  m_logger->info(
+      "Fetch params: stability_window={}, stability_threshold={:.4f}, "
+      "pregrasp_distance={:.3f}, approach_speed={:.3f}",
+      m_stability_window, m_stability_threshold, m_pregrasp_distance,
+      m_approach_speed);
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -481,7 +499,7 @@ void yandy::Robot::handleSeeking() {
 
   // 更新位姿历史
   m_pose_history.push_back(target_pose);
-  if (m_pose_history.size() > STABILITY_WINDOW) {
+  if (m_pose_history.size() > m_stability_window) {
     m_pose_history.pop_front();
   }
 
@@ -493,7 +511,7 @@ void yandy::Robot::handleSeeking() {
     // 从旋转矩阵提取逼近方向 (末端 Z 轴)
     m_locked_approach_dir = target_pose.rotation().col(2);
 
-    m_current_standoff = PREGRASP_DISTANCE;
+    m_current_standoff = m_pregrasp_distance;
     m_pose_history.clear();
 
     m_logger->info("Pose stable, locking target at [{:.3f}, {:.3f}, {:.3f}]",
@@ -504,7 +522,7 @@ void yandy::Robot::handleSeeking() {
                    m_locked_approach_dir.z());
 
     const Eigen::Vector3d pregrasp =
-        m_locked_target_pos - m_locked_approach_dir * PREGRASP_DISTANCE;
+        m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
     m_logger->info("Pre-grasp position: [{:.3f}, {:.3f}, {:.3f}]", pregrasp.x(),
                    pregrasp.y(), pregrasp.z());
 
@@ -516,7 +534,7 @@ void yandy::Robot::handleSeeking() {
   // 尚未稳定，持续追踪（使用 5DoF IK）
   const Eigen::Vector3d approach_dir = target_pose.rotation().col(2);
   const Eigen::Vector3d pregrasp_pos =
-      target_pose.translation() - approach_dir * PREGRASP_DISTANCE;
+      target_pose.translation() - approach_dir * m_pregrasp_distance;
 
   solveAndPlan5DoF(pregrasp_pos, approach_dir);
 }
@@ -524,7 +542,7 @@ void yandy::Robot::handleSeeking() {
 void yandy::Robot::handlePreGrasp() {
   // 移动到预抓取点
   const Eigen::Vector3d pregrasp_pos =
-      m_locked_target_pos - m_locked_approach_dir * PREGRASP_DISTANCE;
+      m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
 
   if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
     return;
@@ -543,7 +561,7 @@ void yandy::Robot::handlePreGrasp() {
 
 void yandy::Robot::handleApproaching() {
   // 直线逼近：逐步减小 standoff 距离
-  m_current_standoff -= APPROACH_SPEED * DT;
+  m_current_standoff -= m_approach_speed * DT;
 
   if (m_current_standoff <= 0.0) {
     m_current_standoff = 0.0;
@@ -569,10 +587,10 @@ void yandy::Robot::handleApproaching() {
 
 void yandy::Robot::handleWithdrawing() {
   // 直线撤回：逐步增加 standoff 距离
-  m_current_standoff += APPROACH_SPEED * DT;
+  m_current_standoff += m_approach_speed * DT;
 
-  if (m_current_standoff >= PREGRASP_DISTANCE) {
-    m_current_standoff = PREGRASP_DISTANCE;
+  if (m_current_standoff >= m_pregrasp_distance) {
+    m_current_standoff = m_pregrasp_distance;
   }
 
   const Eigen::Vector3d current_target =
@@ -583,7 +601,7 @@ void yandy::Robot::handleWithdrawing() {
   }
 
   // 检查是否完成撤回
-  if (m_current_standoff >= PREGRASP_DISTANCE && m_planner->isFinished()) {
+  if (m_current_standoff >= m_pregrasp_distance && m_planner->isFinished()) {
     m_logger->info("Withdrawal complete, exiting fetch mode");
 
     // 仿真模式下随机生成下一个能量单元位姿
@@ -599,13 +617,13 @@ void yandy::Robot::handleWithdrawing() {
 void yandy::Robot::resetFetchState() {
   m_fetch_phase = FetchPhase::Seeking;
   m_pose_history.clear();
-  m_current_standoff = PREGRASP_DISTANCE;
+  m_current_standoff = m_pregrasp_distance;
   m_locked_target_pos.setZero();
   m_locked_approach_dir = Eigen::Vector3d::UnitZ();
 }
 
 bool yandy::Robot::isPoseStable() const {
-  if (m_pose_history.size() < STABILITY_WINDOW) {
+  if (m_pose_history.size() < m_stability_window) {
     return false;
   }
 
@@ -623,7 +641,7 @@ bool yandy::Robot::isPoseStable() const {
   }
   variance /= static_cast<double>(m_pose_history.size());
 
-  return std::sqrt(variance) < STABILITY_THRESHOLD;
+  return std::sqrt(variance) < m_stability_threshold;
 }
 
 Eigen::Vector3d yandy::Robot::computeApproachDirection(double roll,

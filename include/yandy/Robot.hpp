@@ -107,17 +107,17 @@ private:
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
 
-  static constexpr int STABILITY_WINDOW = 10;          // 稳定性检测窗口 (帧数)
-  static constexpr double STABILITY_THRESHOLD = 0.005; // 位置方差阈值 (m)
-  static constexpr double PREGRASP_DISTANCE = 0.05;    // 预抓取距离 (m)
-  static constexpr double APPROACH_SPEED = 0.05;       // 逼近速度 (m/s)
+  int m_stability_window{10};          // 稳定性检测窗口 (帧数)
+  double m_stability_threshold{0.005}; // 位置方差阈值 (m)
+  double m_pregrasp_distance{0.05};    // 预抓取距离 (m)
+  double m_approach_speed{0.05};       // 逼近速度 (m/s)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
   Eigen::Vector3d m_locked_target_pos{
       Eigen::Vector3d::Zero()}; // 锁定的目标位置
   Eigen::Vector3d m_locked_approach_dir{
       Eigen::Vector3d::UnitZ()};                // 锁定的逼近方向
-  double m_current_standoff{PREGRASP_DISTANCE}; // 当前距目标距离
+  double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
 
   // ---- 私有方法 ----
   void visionLoop();
