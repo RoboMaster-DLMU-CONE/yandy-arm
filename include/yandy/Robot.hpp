@@ -86,21 +86,22 @@ private:
                                       // 系)
 
   // ---- 仿真视觉配置 ----
-  bool m_sim_vision_enabled{false};    // 仿真视觉是否启用
-  bool m_sim_vision_random{false};     // 是否使用随机模式
-  Eigen::Isometry3d m_sim_unit_pose{Eigen::Isometry3d::Identity()}; // 当前虚拟能量单元位姿
+  bool m_sim_vision_enabled{false}; // 仿真视觉是否启用
+  bool m_sim_vision_random{false};  // 是否使用随机模式
+  Eigen::Isometry3d m_sim_unit_pose{
+      Eigen::Isometry3d::Identity()}; // 当前虚拟能量单元位姿
   std::array<double, 2> m_sim_x_range{};
   std::array<double, 2> m_sim_y_range{};
   std::array<double, 2> m_sim_z_range{};
   std::array<double, 2> m_sim_roll_range{};
   std::array<double, 2> m_sim_pitch_range{};
-  void generateRandomUnitPose();       // 生成随机能量单元位姿
-  void simVisionLoop();                // 仿真视觉循环
+  void generateRandomUnitPose(); // 生成随机能量单元位姿
+  void simVisionLoop();          // 仿真视觉循环
 
-  bool m_ompl_pending{false};         // OMPL 规划是否正在进行中
-  bool m_ompl_executing{false};       // OMPL 规划正在被 Ruckig 执行中
-  int m_ompl_fail_cooldown{0};        // OMPL 失败后的冷却帧数
-  int m_store_pose_index{0};          // 当前存取矿位姿索引 (由 FSM 回调设置)
+  bool m_ompl_pending{false};   // OMPL 规划是否正在进行中
+  bool m_ompl_executing{false}; // OMPL 规划正在被 Ruckig 执行中
+  int m_ompl_fail_cooldown{0};  // OMPL 失败后的冷却帧数
+  int m_store_pose_index{0};    // 当前存取矿位姿索引 (由 FSM 回调设置)
 
   // ---- 抓取流程状态 ----
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Withdrawing };
@@ -108,7 +109,7 @@ private:
 
   static constexpr int STABILITY_WINDOW = 10;          // 稳定性检测窗口 (帧数)
   static constexpr double STABILITY_THRESHOLD = 0.005; // 位置方差阈值 (m)
-  static constexpr double PREGRASP_DISTANCE = 0.10;    // 预抓取距离 (m)
+  static constexpr double PREGRASP_DISTANCE = 0.05;    // 预抓取距离 (m)
   static constexpr double APPROACH_SPEED = 0.05;       // 逼近速度 (m/s)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)

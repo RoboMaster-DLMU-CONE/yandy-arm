@@ -185,12 +185,13 @@ int main() {
       const auto &vp = vd.vision_unit_pose_base;
       const auto &t = vp.translation();
       
-      // STL 模型本身的圆柱轴沿 Y 轴，需要旋转 -90° 绕 X 轴使圆柱轴朝向 Z
-      // 这样当 rpy=0 时，能量单元就会像水瓶一样竖直立起来
+      // STL 模型本身的圆柱轴沿 Y 轴
+      // 对于竖直放置的圆柱体（不论 approach direction 如何），
+      // 我们希望可视化显示为竖直状态
+      // 旋转 -90° 绕 X 轴使 STL 的 Y 轴对齐到世界 Z 轴
       const Eigen::Matrix3d stl_correction = 
           Eigen::AngleAxisd(-M_PI_2, Eigen::Vector3d::UnitX()).toRotationMatrix();
-      const Eigen::Matrix3d final_rotation = vp.rotation() * stl_correction;
-      const Eigen::Quaterniond q(final_rotation);
+      const Eigen::Quaterniond q(stl_correction);
 
       rec.log_static(
           "world/energy_unit",
