@@ -100,7 +100,7 @@ namespace yandy::modules
         bool checkPathCollision(
             const common::VectorArm& arm_q_start,
             const common::VectorArm& arm_q_goal,
-            int num_samples = 10
+            int num_samples = 5  // 减少采样点，降低假阳性
         );
 
         // 获取 Pinocchio 模型和数据

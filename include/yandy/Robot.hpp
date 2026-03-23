@@ -5,6 +5,7 @@
 
 #include <deque>
 #include <memory>
+#include <random>
 #include <thread>
 
 #include <yandy/common/NBuf.hpp>
@@ -83,7 +84,22 @@ private:
   Eigen::Isometry3d m_sim_cam_pose{
       Eigen::Isometry3d::Identity()}; // 仿真模式下手持相机的固定位姿 (base_link
                                       // 系)
+
+  // ---- 仿真视觉配置 ----
+  bool m_sim_vision_enabled{false};    // 仿真视觉是否启用
+  bool m_sim_vision_random{false};     // 是否使用随机模式
+  Eigen::Isometry3d m_sim_unit_pose{Eigen::Isometry3d::Identity()}; // 当前虚拟能量单元位姿
+  std::array<double, 2> m_sim_x_range{};
+  std::array<double, 2> m_sim_y_range{};
+  std::array<double, 2> m_sim_z_range{};
+  std::array<double, 2> m_sim_roll_range{};
+  std::array<double, 2> m_sim_pitch_range{};
+  void generateRandomUnitPose();       // 生成随机能量单元位姿
+  void simVisionLoop();                // 仿真视觉循环
+
   bool m_ompl_pending{false};         // OMPL 规划是否正在进行中
+  bool m_ompl_executing{false};       // OMPL 规划正在被 Ruckig 执行中
+  int m_ompl_fail_cooldown{0};        // OMPL 失败后的冷却帧数
   int m_store_pose_index{0};          // 当前存取矿位姿索引 (由 FSM 回调设置)
 
   // ---- 抓取流程状态 ----

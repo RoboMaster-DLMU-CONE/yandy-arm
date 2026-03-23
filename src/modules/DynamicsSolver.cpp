@@ -7,6 +7,7 @@
 #include <random>
 #include <cmath>
 #include <algorithm>
+#include <set>
 
 #include "yandy/core/Logger.hpp"
 
@@ -34,7 +35,36 @@ namespace yandy::modules
             
             m_geom_model.addAllCollisionPairs();
             
-            // Remove collision pairs between adjacent links (parent-child)
+            // 获取关节间的距离（跳数）
+            auto jointDistance = [this](pinocchio::JointIndex j1, pinocchio::JointIndex j2) -> int {
+                if (j1 == j2) return 0;
+                // 找到两个关节的公共祖先
+                std::set<pinocchio::JointIndex> ancestors1;
+                pinocchio::JointIndex curr = j1;
+                while (curr != 0) {
+                    ancestors1.insert(curr);
+                    curr = m_model.parents[curr];
+                }
+                ancestors1.insert(0);
+                
+                int dist2 = 0;
+                curr = j2;
+                while (ancestors1.find(curr) == ancestors1.end()) {
+                    ++dist2;
+                    curr = m_model.parents[curr];
+                }
+                
+                int dist1 = 0;
+                pinocchio::JointIndex temp = j1;
+                while (temp != curr) {
+                    ++dist1;
+                    temp = m_model.parents[temp];
+                }
+                
+                return dist1 + dist2;
+            };
+            
+            // Remove collision pairs between close links (distance <= 2)
             for (size_t i = 0; i < m_geom_model.collisionPairs.size(); )
             {
                 const auto& cp = m_geom_model.collisionPairs[i];
@@ -44,14 +74,8 @@ namespace yandy::modules
                 const auto joint1 = obj1.parentJoint;
                 const auto joint2 = obj2.parentJoint;
                 
-                bool remove = false;
-                // Self-collision (same joint)
-                if (joint1 == joint2) remove = true;
-                
-                // Adjacent collision
-                if (m_model.parents[joint1] == joint2 || m_model.parents[joint2] == joint1) remove = true;
-                
-                if (remove)
+                // 移除距离 <= 2 的关节对（自身、父子、祖孙）
+                if (jointDistance(joint1, joint2) <= 2)
                 {
                     m_geom_model.removeCollisionPair(cp);
                     // Do not increment i, as removeCollisionPair shifts the vector

@@ -281,8 +281,9 @@ public:
     }
 
     // 简化的物理积分 (F = ma)
-    common::VectorJ inertia = common::VectorJ::Constant(0.2);
-    common::VectorJ damping = common::VectorJ::Constant(0.5);
+    // 增加惯性和阻尼以减少振荡
+    common::VectorJ inertia = common::VectorJ::Constant(0.5);
+    common::VectorJ damping = common::VectorJ::Constant(2.0);
 
     const common::VectorJ acc =
         (full_tau_motor - tau_grav - damping.cwiseProduct(m_full_v))

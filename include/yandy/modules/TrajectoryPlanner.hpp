@@ -73,8 +73,9 @@ namespace yandy::modules
         // 请求 OMPL 规划 (唤醒后台线程) - 只针对机械臂
         void requestPlan(const common::VectorArm& q_start, const common::VectorArm& q_goal);
 
-        // 检查 OMPL 是否有新结果，有则加载到 Ruckig waypoint 队列
-        bool consumePlanResult();
+        // 检查 OMPL 是否有新结果
+        // 返回值: 0 = 无结果, 1 = 成功加载, -1 = 规划失败
+        int consumePlanResult();
 
         void stopPlanThread();
 

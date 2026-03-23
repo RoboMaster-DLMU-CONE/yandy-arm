@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <random>
 #include <toml++/toml.hpp>
 #include <yandy/Robot.hpp>
 
@@ -54,6 +55,67 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
     m_logger->info("Simulate camera pose: t=[{:.3f},{:.3f},{:.3f}] "
                    "rpy=[{:.3f},{:.3f},{:.3f}]",
                    t.x(), t.y(), t.z(), roll, pitch, yaw);
+
+    // 加载仿真视觉配置
+    if (auto sim_vis = tbl["simulate_vision"]) {
+      auto mode = sim_vis["mode"].value<std::string>().value_or("fixed");
+      m_sim_vision_random = (mode == "random");
+
+      if (!m_sim_vision_random) {
+        // 固定模式：读取固定位姿
+        auto pos = sim_vis["position"].as_array();
+        auto rpy_arr = sim_vis["rpy"].as_array();
+        if (pos && rpy_arr) {
+          Eigen::Vector3d unit_t(pos->get(0)->value<double>().value(),
+                                 pos->get(1)->value<double>().value(),
+                                 pos->get(2)->value<double>().value());
+          double unit_roll = rpy_arr->get(0)->value<double>().value();
+          double unit_pitch = rpy_arr->get(1)->value<double>().value();
+          double unit_yaw = rpy_arr->get(2)->value<double>().value();
+
+          m_sim_unit_pose = Eigen::Isometry3d::Identity();
+          m_sim_unit_pose.translate(unit_t);
+          m_sim_unit_pose.rotate(
+              Eigen::AngleAxisd(unit_yaw, Eigen::Vector3d::UnitZ()) *
+              Eigen::AngleAxisd(unit_pitch, Eigen::Vector3d::UnitY()) *
+              Eigen::AngleAxisd(unit_roll, Eigen::Vector3d::UnitX()));
+
+          m_logger->info(
+              "Simulate vision (fixed, base_link): t=[{:.3f},{:.3f},{:.3f}] rpy=[{:.3f},{:.3f},{:.3f}]",
+              unit_t.x(), unit_t.y(), unit_t.z(), unit_roll, unit_pitch, unit_yaw);
+        }
+      } else {
+        // 随机模式：读取范围参数
+        auto x_range = sim_vis["random_x_range"].as_array();
+        auto y_range = sim_vis["random_y_range"].as_array();
+        auto z_range = sim_vis["random_z_range"].as_array();
+        auto roll_range = sim_vis["random_roll_range"].as_array();
+        auto pitch_range = sim_vis["random_pitch_range"].as_array();
+
+        if (x_range && y_range && z_range && roll_range && pitch_range) {
+          m_sim_x_range = {x_range->get(0)->value<double>().value(),
+                          x_range->get(1)->value<double>().value()};
+          m_sim_y_range = {y_range->get(0)->value<double>().value(),
+                          y_range->get(1)->value<double>().value()};
+          m_sim_z_range = {z_range->get(0)->value<double>().value(),
+                          z_range->get(1)->value<double>().value()};
+          m_sim_roll_range = {roll_range->get(0)->value<double>().value(),
+                              roll_range->get(1)->value<double>().value()};
+          m_sim_pitch_range = {pitch_range->get(0)->value<double>().value(),
+                               pitch_range->get(1)->value<double>().value()};
+
+          m_logger->info("Simulate vision (random, base_link): x=[{:.3f},{:.3f}] y=[{:.3f},{:.3f}] "
+                         "z=[{:.3f},{:.3f}] roll=[{:.3f},{:.3f}] pitch=[{:.3f},{:.3f}]",
+                         m_sim_x_range[0], m_sim_x_range[1],
+                         m_sim_y_range[0], m_sim_y_range[1],
+                         m_sim_z_range[0], m_sim_z_range[1],
+                         m_sim_roll_range[0], m_sim_roll_range[1],
+                         m_sim_pitch_range[0], m_sim_pitch_range[1]);
+        }
+        // 初始化时生成第一个随机位姿
+        generateRandomUnitPose();
+      }
+    }
   }
 }
 
@@ -70,6 +132,11 @@ void yandy::Robot::start() {
   if (m_hik_driver.init() && m_detector.init()) {
     m_vision_thread = std::thread([this] { visionLoop(); });
     m_logger->info("Vision thread launched.");
+  } else if (m_is_simulate) {
+    // 仿真模式下视觉初始化失败，启用仿真视觉
+    m_sim_vision_enabled = true;
+    m_vision_thread = std::thread([this] { simVisionLoop(); });
+    m_logger->info("Real vision init failed, using simulated vision.");
   } else {
     m_logger->warn("Vision subsystem init failed, running without vision.");
   }
@@ -111,15 +178,39 @@ void yandy::Robot::start() {
     m_planner->updateGimbalState(m_gimbal_state.q);
 
     // 4. 检查 OMPL 是否有新规划结果
-    if (m_ompl_pending && m_planner->consumePlanResult()) {
-      m_ompl_pending = false;
-      m_logger->info("OMPL plan loaded into trajectory planner");
+    if (m_ompl_pending) {
+      int result = m_planner->consumePlanResult();
+      if (result == 1) {
+        // 规划成功
+        m_ompl_pending = false;
+        m_ompl_executing = true;
+        m_ompl_fail_cooldown = 0;
+        m_logger->info("OMPL plan loaded into trajectory planner");
+      } else if (result == -1) {
+        // 规划失败，设置冷却期 (约0.5秒 @250Hz = 125帧)
+        m_ompl_pending = false;
+        m_ompl_fail_cooldown = 125;
+        m_logger->warn("OMPL plan failed, cooldown before retry");
+      }
+    }
+    
+    // 5. 减少 OMPL 失败冷却计数
+    if (m_ompl_fail_cooldown > 0) {
+      --m_ompl_fail_cooldown;
+    }
+    
+    // 6. 检查 OMPL 规划是否执行完毕
+    if (m_ompl_executing && m_planner->isFinished()) {
+      m_ompl_executing = false;
+      // 执行完成后也设置短冷却，避免立即重新检测碰撞
+      m_ompl_fail_cooldown = 50;  // 约0.2秒
+      m_logger->info("OMPL plan execution finished");
     }
 
-    // 5. 获取当前状态 (用于连续行为派发)
+    // 7. 获取当前状态 (用于连续行为派发)
     const auto cur_state = m_fsm.getState();
 
-    // 6. 按状态派发 (设置目标给 planner)
+    // 8. 按状态派发 (设置目标给 planner)
     switch (cur_state) {
     case YandyState::Manual:
       handleManual();
@@ -237,12 +328,70 @@ void yandy::Robot::visionLoop() {
 }
 
 // ============================================================
+// 仿真视觉
+// ============================================================
+
+void yandy::Robot::generateRandomUnitPose() {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+
+  std::uniform_real_distribution<> x_dist(m_sim_x_range[0], m_sim_x_range[1]);
+  std::uniform_real_distribution<> y_dist(m_sim_y_range[0], m_sim_y_range[1]);
+  std::uniform_real_distribution<> z_dist(m_sim_z_range[0], m_sim_z_range[1]);
+  std::uniform_real_distribution<> roll_dist(m_sim_roll_range[0], m_sim_roll_range[1]);
+  std::uniform_real_distribution<> pitch_dist(m_sim_pitch_range[0], m_sim_pitch_range[1]);
+
+  double x = x_dist(gen);
+  double y = y_dist(gen);
+  double z = z_dist(gen);
+  double roll = roll_dist(gen);
+  double pitch = pitch_dist(gen);
+  double yaw = 0.0; // yaw 不确定，设为 0
+
+  m_sim_unit_pose = Eigen::Isometry3d::Identity();
+  m_sim_unit_pose.translate(Eigen::Vector3d(x, y, z));
+  m_sim_unit_pose.rotate(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+                         Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+                         Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()));
+
+  m_logger->info("Generated random unit pose (base_link): t=[{:.3f},{:.3f},{:.3f}] rp=[{:.3f},{:.3f}]",
+                 x, y, z, roll, pitch);
+}
+
+void yandy::Robot::simVisionLoop() {
+  m_logger->info("Simulated vision loop started.");
+
+  while (m_running.load(std::memory_order_relaxed)) {
+    // 以固定频率发布仿真视觉数据 (模拟30Hz相机)
+    // m_sim_unit_pose 是 baselink 系，需要转换到相机系
+    // T_cam_obj = T_cam_base * T_base_obj
+    Eigen::Isometry3d T_cam_obj = m_sim_cam_pose.inverse() * m_sim_unit_pose;
+    
+    detail::VisionData vd;
+    vd.valid = true;
+    vd.unit_pose = T_cam_obj;
+    m_vision_buf.write(vd);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(33));
+  }
+
+  m_logger->info("Simulated vision loop exited.");
+}
+
+// ============================================================
 // 持续性状态处理
 // ============================================================
 
 bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
   m_target_pose = target_pose;
   m_arm_cmd.tau_ff = m_solver.computeGravity();
+
+  // 如果 OMPL 正在等待或执行中，让 Ruckig 继续跟踪 waypoints，不重新规划
+  if (m_ompl_pending || m_ompl_executing) {
+    m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+    m_arm_hw.write(m_arm_cmd);
+    return false;
+  }
 
   // IK 求解 (只针对机械臂 6 DoF)
   auto q_sol = m_solver.solveIK(target_pose, m_arm_state.q, 0.01);
@@ -256,22 +405,21 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
   const auto &q_goal = q_sol.value();
 
   // 路径碰撞检测 (使用当前云台状态)
-  if (m_solver.checkPathCollision(m_arm_state.q, q_goal)) {
+  // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动
+  bool collision = m_solver.checkPathCollision(m_arm_state.q, q_goal);
+  if (m_ompl_fail_cooldown == 0 && collision) {
     // 路径有碰撞 → 停车 + 唤醒 OMPL
-    if (!m_ompl_pending) {
-      m_logger->warn(
-          "Path collision detected, braking and requesting OMPL plan");
-      m_planner->brake();
-      m_planner->requestPlan(m_arm_state.q, q_goal);
-      m_ompl_pending = true;
-    }
-    // OMPL 正在规划中，Ruckig 继续执行停车/已有轨迹
+    m_logger->warn(
+        "Path collision detected, braking and requesting OMPL plan");
+    m_planner->brake();
+    m_planner->requestPlan(m_arm_state.q, q_goal);
+    m_ompl_pending = true;
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
     m_arm_hw.write(m_arm_cmd);
     return false;
   }
 
-  // 无碰撞 → 直接设目标
+  // 无碰撞（或冷却期内跳过检测）→ 直接设目标
   m_planner->setTarget(q_goal);
   m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
   m_arm_hw.write(m_arm_cmd);
@@ -425,6 +573,12 @@ void yandy::Robot::handleWithdrawing() {
   // 检查是否完成撤回
   if (m_current_standoff >= PREGRASP_DISTANCE && m_planner->isFinished()) {
     m_logger->info("Withdrawal complete, exiting fetch mode");
+
+    // 仿真模式下随机生成下一个能量单元位姿
+    if (m_sim_vision_enabled && m_sim_vision_random) {
+      generateRandomUnitPose();
+    }
+
     // 抓取完成后自动退出 FetchingMode (发送 CMD_SWITCH_FETCH)
     m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_FETCH);
   }
@@ -473,7 +627,31 @@ Eigen::Vector3d yandy::Robot::computeApproachDirection(double roll,
 
 bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
                                     const Eigen::Vector3d &approach_dir) {
+  // 构造目标位姿用于可视化（只使用位置和approach方向）
+  // 使用 Gram-Schmidt 构造完整的旋转矩阵
+  Eigen::Vector3d z_axis = approach_dir.normalized();
+  Eigen::Vector3d x_axis = z_axis.cross(Eigen::Vector3d::UnitY()).normalized();
+  if (x_axis.norm() < 0.01) {
+    x_axis = z_axis.cross(Eigen::Vector3d::UnitX()).normalized();
+  }
+  Eigen::Vector3d y_axis = z_axis.cross(x_axis);
+  Eigen::Matrix3d R;
+  R.col(0) = x_axis;
+  R.col(1) = y_axis;
+  R.col(2) = z_axis;
+  
+  m_target_pose = Eigen::Isometry3d::Identity();
+  m_target_pose.translate(target_pos);
+  m_target_pose.rotate(R);
+  
   m_arm_cmd.tau_ff = m_solver.computeGravity();
+
+  // 如果 OMPL 正在等待或执行中，让 Ruckig 继续跟踪 waypoints，不重新规划
+  if (m_ompl_pending || m_ompl_executing) {
+    m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+    m_arm_hw.write(m_arm_cmd);
+    return false;
+  }
 
   // 5DoF IK 求解
   auto q_sol =
@@ -488,19 +666,18 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   const auto &q_goal = q_sol.value();
 
   // 路径碰撞检测
-  if (m_solver.checkPathCollision(m_arm_state.q, q_goal)) {
-    if (!m_ompl_pending) {
-      m_logger->warn("Path collision detected, requesting OMPL plan");
-      m_planner->brake();
-      m_planner->requestPlan(m_arm_state.q, q_goal);
-      m_ompl_pending = true;
-    }
+  // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动
+  if (m_ompl_fail_cooldown == 0 && m_solver.checkPathCollision(m_arm_state.q, q_goal)) {
+    m_logger->warn("Path collision detected, requesting OMPL plan");
+    m_planner->brake();
+    m_planner->requestPlan(m_arm_state.q, q_goal);
+    m_ompl_pending = true;
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
     m_arm_hw.write(m_arm_cmd);
     return false;
   }
 
-  // 无碰撞，设置目标
+  // 无碰撞（或冷却期内跳过检测），设置目标
   m_planner->setTarget(q_goal);
   m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
   m_arm_hw.write(m_arm_cmd);

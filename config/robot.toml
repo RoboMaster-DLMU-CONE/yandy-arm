@@ -9,3 +9,18 @@ rpy = [-1.7, 0.0, 0.0]
 [simulate_rerun]
 ip = "127.0.0.1"
 port = 9876
+
+# 仿真模式下虚拟能量单元配置
+# mode: "fixed" 使用固定坐标, "random" 每次取矿后随机生成
+[simulate_vision]
+mode = "fixed"
+# 固定模式下的能量单元位姿 (base_link 坐标系)
+# position: [x, y, z] 单位 m; rpy: [roll, pitch, yaw] 单位 rad
+position = [0.55, 0.0, 0.65]
+rpy = [0.0, 0.0, 0.0]
+# 随机模式下的生成范围 (base_link 坐标系)
+random_x_range = [0.2, 0.4]
+random_y_range = [-0.2, 0.2]
+random_z_range = [0.1, 0.3]
+random_roll_range = [-0.3, 0.3]
+random_pitch_range = [1.27, 1.87]

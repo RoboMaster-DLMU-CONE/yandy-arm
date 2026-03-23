@@ -154,11 +154,14 @@ namespace yandy::modules
         m_logger->info("OMPL plan requested");
     }
 
-    bool TrajectoryPlanner::consumePlanResult()
+    int TrajectoryPlanner::consumePlanResult()
     {
         auto plan = m_plan_result_buf.try_read();
-        if (!plan.has_value() || !plan->valid)
-            return false;
+        if (!plan.has_value())
+            return 0;  // 无结果
+
+        if (!plan->valid)
+            return -1;  // 规划失败
 
         m_waypoints.clear();
         m_waypoints.reserve(plan->count);
@@ -175,7 +178,7 @@ namespace yandy::modules
         }
 
         m_logger->info("Loaded OMPL plan with {} waypoints", plan->count);
-        return true;
+        return 1;  // 成功
     }
 
     // ================================================================
@@ -262,14 +265,20 @@ namespace yandy::modules
         ss.setStartAndGoalStates(start, goal);
 
         // 使用 RRTConnect
-        ss.setPlanner(std::make_shared<og::RRTConnect>(ss.getSpaceInformation()));
+        auto planner = std::make_shared<og::RRTConnect>(ss.getSpaceInformation());
+        planner->setRange(0.5);  // 减小步长，更精细的路径搜索
+        ss.setPlanner(planner);
 
-        auto solved = ss.solve(1.0); // 最多 1 秒
+        auto solved = ss.solve(2.0); // 最多 2 秒
 
         if (solved)
         {
             ss.simplifySolution();
             auto& path = ss.getSolutionPath();
+            
+            // 插值路径以获得更平滑的轨迹
+            path.interpolate(20);  // 至少20个waypoints
+            
             auto& states = path.getStates();
 
             plan.count = std::min(static_cast<int>(states.size()), TrajectoryPlan::MAX_WAYPOINTS);

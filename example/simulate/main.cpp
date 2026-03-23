@@ -184,7 +184,13 @@ int main() {
     if (vd.vision_valid) {
       const auto &vp = vd.vision_unit_pose_base;
       const auto &t = vp.translation();
-      const Eigen::Quaterniond q(vp.rotation());
+      
+      // STL 模型本身的圆柱轴沿 Y 轴，需要旋转 -90° 绕 X 轴使圆柱轴朝向 Z
+      // 这样当 rpy=0 时，能量单元就会像水瓶一样竖直立起来
+      const Eigen::Matrix3d stl_correction = 
+          Eigen::AngleAxisd(-M_PI_2, Eigen::Vector3d::UnitX()).toRotationMatrix();
+      const Eigen::Matrix3d final_rotation = vp.rotation() * stl_correction;
+      const Eigen::Quaterniond q(final_rotation);
 
       rec.log_static(
           "world/energy_unit",
