@@ -23,7 +23,12 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
   cb.on_open_claw = [this] { m_effector.openClaw(); };
   cb.on_close_claw = [this] { m_effector.closeClaw(); };
   cb.on_brake = [this] { m_planner->brake(); };
-  cb.on_enter_store = [this](int idx) { m_store_pose_index = idx; };
+  cb.on_enter_store = [this](int idx) {
+    m_store_pose_index = idx;
+    // 存矿(有矿): 先到上方再下降; 取矿(无矿): 直接到 store 位置
+    m_store_phase = m_fsm.hasMineralAttached() ? StorePhase::Approaching
+                                                : StorePhase::AtTarget;
+  };
   cb.on_enter_fetch = [this] { resetFetchState(); };
   m_fsm.setCallbacks(cb);
 
@@ -139,6 +144,12 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
       "pregrasp_distance={:.3f}, approach_speed={:.3f}, extract_distance={:.3f}",
       m_stability_window, m_stability_threshold, m_pregrasp_distance,
       m_approach_speed, m_extract_distance);
+
+  if (auto store = tbl["store"]; store.is_table()) {
+    m_store_approach_offset =
+        store["approach_offset"].value<double>().value_or(m_store_approach_offset);
+  }
+  m_logger->info("Store params: approach_offset={:.3f}", m_store_approach_offset);
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -451,6 +462,8 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
 }
 
 void yandy::Robot::handleManual() {
+  // 保险：离开 Store 模式时（不论是正常完成还是手动取消）恢复 base_link 碰撞检测
+  m_solver.setBaseLinkCollisionEnabled(true);
   const auto pack = m_input.getLatestCommand();
 
   // 构造目标位姿 (基座坐标系)
@@ -584,6 +597,9 @@ void yandy::Robot::handleApproaching() {
   if (m_current_standoff <= 0.0 && m_planner->isFinished()) {
     m_logger->info("Reached grasp target, closing claw");
     m_effector.closeClaw();
+
+    // 设置 FSM 手持状态标志
+    m_fsm.setMineralAttached(true);
 
     m_current_extract_offset = 0.0;
     m_fetch_phase = FetchPhase::Extracting;
@@ -756,5 +772,66 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
 }
 
 void yandy::Robot::handleStore() {
-  solveAndPlan(m_store_pose[m_store_pose_index]);
+  // 存取矿期间忽略与 base_link（底座柱子）的碰撞
+  m_solver.setBaseLinkCollisionEnabled(false);
+
+  const Eigen::Isometry3d &sp = m_store_pose[m_store_pose_index];
+
+  // store_frame 正上方（世界 Z 轴）的预接近位姿
+  Eigen::Isometry3d above_pose = sp;
+  above_pose.translation() += Eigen::Vector3d::UnitZ() * m_store_approach_offset;
+
+  const bool is_deposit = m_fsm.hasMineralAttached();
+
+  if (is_deposit) {
+    // 存矿: Approaching（上方）→ AtTarget（store位置）→ 开爪 → 退出
+    switch (m_store_phase) {
+    case StorePhase::Approaching: {
+      if (!solveAndPlan(above_pose)) return;
+      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
+        m_logger->info("Store: reached above-store, lowering to store frame");
+        m_store_phase = StorePhase::AtTarget;
+      }
+      break;
+    }
+    case StorePhase::AtTarget: {
+      if (!solveAndPlan(sp)) return;
+      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
+        m_logger->info("Store: reached store position, opening claw");
+        m_effector.openClaw();
+        m_solver.setBaseLinkCollisionEnabled(true);
+        m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
+      }
+      break;
+    }
+    default: break;
+    }
+  } else {
+    // 取矿: AtTarget（store位置）→ 闭爪 → Retracting（上方）→ 退出
+    switch (m_store_phase) {
+    case StorePhase::AtTarget: {
+      if (!solveAndPlan(sp)) return;
+      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
+        m_logger->info("Store: reached store position, closing claw");
+        m_effector.closeClaw();
+        m_store_phase = StorePhase::Retracting;
+      }
+      break;
+    }
+    case StorePhase::Retracting: {
+      if (!solveAndPlan(above_pose)) return;
+      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
+        m_logger->info("Store: lifted store item, exiting store mode");
+        m_solver.setBaseLinkCollisionEnabled(true);
+        m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
+      }
+      break;
+    }
+    default: break;
+    }
+  }
 }

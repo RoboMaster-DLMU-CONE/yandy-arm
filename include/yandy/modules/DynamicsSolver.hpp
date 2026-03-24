@@ -108,6 +108,9 @@ namespace yandy::modules
         pinocchio::Data& getData() { return m_data; }
         const pinocchio::GeometryModel& getGeometryModel() const { return m_geom_model; }
 
+        // 启用/禁用与 base_link 相关的碰撞对（用于存取矿等会与底座发生干涉的场景）
+        void setBaseLinkCollisionEnabled(bool enabled);
+
         // 获取当前云台状态 (用于 TrajectoryPlanner)
         const common::VectorGimbal& getCurrentGimbalQ() const { return m_current_gimbal_q; }
 
@@ -118,6 +121,8 @@ namespace yandy::modules
         pinocchio::Data m_data;
         pinocchio::GeometryModel m_geom_model;
         pinocchio::GeometryData m_geom_data;
+
+        std::vector<size_t> m_base_link_pair_indices; // 涉及 base_link 的碰撞对索引（缓存）
 
         // 分离存储机械臂和云台状态
         common::VectorArm m_current_arm_q{common::VectorArm::Zero()};

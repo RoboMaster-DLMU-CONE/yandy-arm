@@ -32,3 +32,7 @@ stability_threshold = 0.005 # 位置方差阈值 (m)
 pregrasp_distance = 0.1     # 预抓取距离 (m)
 approach_speed = 0.1        # 逼近速度 (m/s)
 extract_distance = 0.08     # 提取距离：抓取后沿提取方向移动的距离 (m)
+# 提取方向由视觉解析的能量单元位姿自动计算 (末端 X 轴 = 瓶口反方向)，无需手动配置
+
+[store]
+approach_offset = 0.15 # 存取矿时，沿世界 Z 轴（竖直向上）的预接近距离 (m)

@@ -85,6 +85,17 @@ DynamicsSolver::DynamicsSolver()
     // Re-initialize geometry data with the populated model
     m_geom_data = pinocchio::GeometryData(m_geom_model);
 
+    // 缓存涉及 base_link 的碰撞对索引
+    for (size_t i = 0; i < m_geom_model.collisionPairs.size(); ++i) {
+      const auto &cp = m_geom_model.collisionPairs[i];
+      const auto &name1 = m_geom_model.geometryObjects[cp.first].name;
+      const auto &name2 = m_geom_model.geometryObjects[cp.second].name;
+      if (name1.find("base_link") != std::string::npos ||
+          name2.find("base_link") != std::string::npos) {
+        m_base_link_pair_indices.push_back(i);
+      }
+    }
+
     m_logger->info("Geometry model loaded. Collision pairs: {}",
                    m_geom_model.collisionPairs.size());
   } catch (const std::exception &e) {
@@ -558,6 +569,12 @@ bool DynamicsSolver::checkPathCollision(const common::VectorArm &arm_q_start,
     }
   }
   return false;
+}
+
+void DynamicsSolver::setBaseLinkCollisionEnabled(bool enabled) {
+  for (size_t idx : m_base_link_pair_indices) {
+    m_geom_data.activeCollisionPairs[idx] = enabled;
+  }
 }
 
 common::VectorArm DynamicsSolver::generateRandomArmPositions() {

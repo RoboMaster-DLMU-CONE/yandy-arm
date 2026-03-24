@@ -103,6 +103,11 @@ private:
   int m_ompl_fail_cooldown{0};  // OMPL 失败后的冷却帧数
   int m_store_pose_index{0};    // 当前存取矿位姿索引 (由 FSM 回调设置)
 
+  // ---- 存取矿流程状态 ----
+  enum class StorePhase { Approaching, AtTarget, Retracting };
+  StorePhase m_store_phase{StorePhase::Approaching};
+  double m_store_approach_offset{0.3}; // store_frame Z 轴上偏移 (m)
+
   // ---- 抓取流程状态 ----
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};

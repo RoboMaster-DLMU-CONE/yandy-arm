@@ -366,6 +366,7 @@ namespace yandy::modules
         YandyState getState() const;
         bool hasMineralAttached() const { return m_fsm.mineral_attached; }
         int getStoredCount() const { return m_fsm.stored_count; }
+        void setMineralAttached(bool attached) { m_fsm.mineral_attached = attached; }
         void setCallbacks(const detail::FSMCallbacks& cb);
 
     private:
