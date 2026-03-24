@@ -132,23 +132,13 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         fetch["approach_speed"].value<double>().value_or(m_approach_speed);
     m_extract_distance =
         fetch["extract_distance"].value<double>().value_or(m_extract_distance);
-    if (auto dir_arr = fetch["extract_direction"].as_array();
-        dir_arr && dir_arr->size() == 3) {
-      m_extract_direction =
-          Eigen::Vector3d(dir_arr->get(0)->value<double>().value(),
-                          dir_arr->get(1)->value<double>().value(),
-                          dir_arr->get(2)->value<double>().value())
-              .normalized();
-    }
     m_current_standoff = m_pregrasp_distance;
   }
   m_logger->info(
       "Fetch params: stability_window={}, stability_threshold={:.4f}, "
-      "pregrasp_distance={:.3f}, approach_speed={:.3f}, "
-      "extract_distance={:.3f}, extract_direction=[{:.3f},{:.3f},{:.3f}]",
+      "pregrasp_distance={:.3f}, approach_speed={:.3f}, extract_distance={:.3f}",
       m_stability_window, m_stability_threshold, m_pregrasp_distance,
-      m_approach_speed, m_extract_distance,
-      m_extract_direction.x(), m_extract_direction.y(), m_extract_direction.z());
+      m_approach_speed, m_extract_distance);
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -523,8 +513,9 @@ void yandy::Robot::handleSeeking() {
     // 锁定目标
     m_locked_target_pos = target_pose.translation();
 
-    // 从旋转矩阵提取逼近方向 (末端 Z 轴)
+    // 从旋转矩阵提取逼近方向 (末端 Z 轴) 和提取方向 (末端 X 轴，即瓶口反方向)
     m_locked_approach_dir = target_pose.rotation().col(2);
+    m_locked_extract_dir = -target_pose.rotation().col(0);
 
     m_current_standoff = m_pregrasp_distance;
     m_pose_history.clear();
@@ -597,8 +588,8 @@ void yandy::Robot::handleApproaching() {
     m_current_extract_offset = 0.0;
     m_fetch_phase = FetchPhase::Extracting;
     m_logger->info("Grasp complete, starting extraction along [{:.3f},{:.3f},{:.3f}]...",
-                   m_extract_direction.x(), m_extract_direction.y(),
-                   m_extract_direction.z());
+                   m_locked_extract_dir.x(), m_locked_extract_dir.y(),
+                   m_locked_extract_dir.z());
   }
 }
 
@@ -610,7 +601,7 @@ void yandy::Robot::handleExtracting() {
   }
 
   const Eigen::Vector3d current_target =
-      m_locked_target_pos + m_extract_direction * m_current_extract_offset;
+      m_locked_target_pos + m_locked_extract_dir * m_current_extract_offset;
 
   if (!solveAndPlan5DoF(current_target, m_locked_approach_dir)) {
     return;
@@ -620,8 +611,8 @@ void yandy::Robot::handleExtracting() {
     m_logger->info("Extraction complete ({:.3f}m along [{:.3f},{:.3f},{:.3f}]), "
                    "starting withdrawal...",
                    m_extract_distance,
-                   m_extract_direction.x(), m_extract_direction.y(),
-                   m_extract_direction.z());
+                   m_locked_extract_dir.x(), m_locked_extract_dir.y(),
+                   m_locked_extract_dir.z());
     m_fetch_phase = FetchPhase::Withdrawing;
   }
 }
@@ -657,6 +648,7 @@ void yandy::Robot::resetFetchState() {
   m_current_extract_offset = 0.0;
   m_locked_target_pos.setZero();
   m_locked_approach_dir = Eigen::Vector3d::UnitZ();
+  m_locked_extract_dir = -Eigen::Vector3d::UnitX();
 }
 
 bool yandy::Robot::isPoseStable() const {

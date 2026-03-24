@@ -16,15 +16,14 @@ port = 9876
 mode = "fixed"
 # 固定模式下的能量单元位姿 (base_link 坐标系)
 # position: [x, y, z] 单位 m; rpy: [roll, pitch, yaw] 单位 rad
-# pitch=π/2 表示水平逼近 (从靠近机械臂一侧)
-position = [0.45, 0.0, 0.62]
-rpy = [0.0, 1.5708, 0.0]
+position = [0.44, 0.0, 0.53]
+rpy = [0.0, 1.57, 0.0]
 # 随机模式下的生成范围 (base_link 坐标系)
 random_x_range = [0.2, 0.4]
 random_y_range = [-0.2, 0.2]
 random_z_range = [0.1, 0.3]
 random_roll_range = [-0.3, 0.3]
-# pitch=π/2 为水平逼近 (从靠近机械臂一侧)
+# pitch=π/2 时圆柱竖直、从 X 方向逼近瓶身
 random_pitch_range = [1.3, 1.9]
 
 [fetch]
@@ -33,6 +32,3 @@ stability_threshold = 0.005 # 位置方差阈值 (m)
 pregrasp_distance = 0.1     # 预抓取距离 (m)
 approach_speed = 0.1        # 逼近速度 (m/s)
 extract_distance = 0.08     # 提取距离：抓取后沿提取方向移动的距离 (m)
-# 提取方向 (世界坐标系，单位向量，会自动归一化)
-# 默认为世界 -Z 方向（向下），即从竖直圆柱容器中向下取出能量单元
-extract_direction = [0.0, 0.0, -1.0]

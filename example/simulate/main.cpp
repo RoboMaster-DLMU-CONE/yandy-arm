@@ -184,14 +184,12 @@ int main() {
     if (vd.vision_valid) {
       const auto &vp = vd.vision_unit_pose_base;
       const auto &t = vp.translation();
-      
-      // STL 模型本身的圆柱轴沿 Y 轴
-      // 对于竖直放置的圆柱体（不论 approach direction 如何），
-      // 我们希望可视化显示为竖直状态
-      // 旋转 -90° 绕 X 轴使 STL 的 Y 轴对齐到世界 Z 轴
-      const Eigen::Matrix3d stl_correction = 
-          Eigen::AngleAxisd(-M_PI_2, Eigen::Vector3d::UnitX()).toRotationMatrix();
-      const Eigen::Quaterniond q(stl_correction);
+
+      // STL 圆柱轴沿 STL-Y；stl_correction 将 STL-Y 映射到 body-(-X)，
+      // 使 body-Z（逼近方向）与圆柱轴垂直：rpy=[0,π/2,0] 时圆柱竖直、从 X 方向逼近。
+      const Eigen::Matrix3d stl_correction =
+          Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+      const Eigen::Quaterniond q(vp.rotation() * stl_correction);
 
       rec.log_static(
           "world/energy_unit",

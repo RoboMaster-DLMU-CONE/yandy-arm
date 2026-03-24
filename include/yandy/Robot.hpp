@@ -112,13 +112,14 @@ private:
   double m_pregrasp_distance{0.05};    // 预抓取距离 (m)
   double m_approach_speed{0.05};       // 逼近速度 (m/s)
   double m_extract_distance{0.05};     // 提取距离 (m)
-  Eigen::Vector3d m_extract_direction{0.0, 0.0, -1.0}; // 提取方向 (世界坐标系)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
   Eigen::Vector3d m_locked_target_pos{
       Eigen::Vector3d::Zero()}; // 锁定的目标位置
   Eigen::Vector3d m_locked_approach_dir{
       Eigen::Vector3d::UnitZ()};                // 锁定的逼近方向
+  Eigen::Vector3d m_locked_extract_dir{
+      -Eigen::Vector3d::UnitX()};               // 锁定的提取方向 (= 锁定位姿 -R.col(0) = 瓶口反方向)
   double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
   double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
 
