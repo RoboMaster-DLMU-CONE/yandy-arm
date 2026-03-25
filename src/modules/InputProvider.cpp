@@ -129,7 +129,13 @@ UsbProvider::~UsbProvider() {
 void UsbProvider::on_serial_read(std::span<const std::byte> data) {
   const auto size = data.size();
   const auto u8_data = reinterpret_cast<const uint8_t *>(data.data());
-  (void)m_par.push_data(u8_data, size);
+  (void)m_par.push_data(u8_data, size)
+      .map([this](void) {
+        const auto packet = m_des.get<YandyControlPack>();
+        update_cmd(packet.cmd);
+        m_buf.write(packet);
+      })
+      .or_else([this](auto &&e) { m_logger->error(e.message); });
 }
 
 void UsbProvider::on_serial_error(const ssize_t e) const {
