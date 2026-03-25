@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 option(YANDY_BUILD_EXAMPLES "" OFF)
+option(YANDY_BUILD_SIMULATE "" OFF)
 option(YANDY_BUILD_TELEOP_CLIENT "" OFF)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -20,5 +21,9 @@ add_subdirectory(src)
 if (YANDY_BUILD_EXAMPLES)
   add_subdirectory(example)
 endif ()
+
+if (YANDY_BUILD_SIMULATE)
+  add_subdirectory(simulate)
+endif()
 
 add_subdirectory(scripts)

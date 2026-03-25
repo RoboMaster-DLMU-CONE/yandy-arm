@@ -1,6 +1,8 @@
+#include "yandy/common/Types.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fmt/ostream.h>
 #include <iostream>
 #include <memory>
 #include <one/can/CanDriver.hpp>
@@ -16,12 +18,16 @@ using namespace std::chrono_literals;
 
 std::atomic<bool> g_running{true};
 
+template <>
+struct fmt::formatter<common::VectorArm> : fmt::ostream_formatter {};
+
 void signal_handler(int signum) { g_running = false; }
 
 int main() {
   // Register signal handler for clean shutdown
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
+  yandy::core::init_logging();
 
   auto logger = core::create_logger("GravityTest", spdlog::level::info);
   logger->info("Starting Gravity Compensation Test (Drag Mode)...");
@@ -55,7 +61,7 @@ int main() {
   // Initialize command
   cmd.q_des.setZero();
   cmd.v_des.setZero();
-  cmd.kp.setZero(); // Hope ArmHW uses this (currently might be ignored)
+  cmd.kp.fill(0);   // Hope ArmHW uses this (currently might be ignored)
   cmd.kd.fill(0.5); // Small damping
   cmd.tau_ff.setZero();
 
@@ -86,6 +92,7 @@ int main() {
 
     // 6. Timing
     next_time += period;
+    logger->info("Current q:{}, Tau_G:{}", current_state.q, tau_g);
     std::this_thread::sleep_until(next_time);
   }
 

@@ -301,8 +301,8 @@ public:
 private:
   pinocchio::Model m_sim_model;
   pinocchio::Data m_sim_data;
-  common::VectorJ m_full_q;                               // 完整 9D 位置 (Pinocchio 顺序)
-  common::VectorJ m_full_v;                               // 完整 9D 速度 (Pinocchio 顺序)
+  common::VectorJ m_full_q; // 完整 9D 位置 (Pinocchio 顺序)
+  common::VectorJ m_full_v; // 完整 9D 速度 (Pinocchio 顺序)
   common::VectorArm m_arm_tau{common::VectorArm::Zero()}; // 机械臂力矩反馈
   common::ArmCommand m_last_cmd;
   std::shared_ptr<spdlog::logger> m_logger;

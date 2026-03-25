@@ -33,7 +33,7 @@ int main() {
       (void)j2.sendRefreshStatus();
       (void)j3.sendRefreshStatus();
       (void)j5.sendRefreshStatus();
-      std::cout << std::format("j1: {}, j2: {}, j3: {}, j5: {}",
+      std::cout << std::format("j1: {}, j2: {}, j3: {}, j5: {}\n",
                                j1.getStatus().position, j2.getStatus().position,
                                j3.getStatus().position,
                                j5.getStatus().position);
