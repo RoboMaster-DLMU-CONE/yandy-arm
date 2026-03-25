@@ -1,6 +1,6 @@
 [yolo]
 thres = 0.5
-device = "CPU"
+device = "GPU"
 model = "best.onnx" # 需要放在config/yolo下
 
 [camera]

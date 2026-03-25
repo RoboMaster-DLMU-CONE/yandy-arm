@@ -26,7 +26,7 @@ mit_pid = { kp = 0.0, kd = 0.5 }
 id = 7
 offset = 0.0
 dir = 1.0
-mit_pid = { kp = 1.0, kd = 0.5 }
+mit_pid = { kp = 80.0, kd = 0.5 }
 
 [joint_5]
 can_id = 0x05
@@ -39,4 +39,4 @@ mit_pid = { kp = 0.0, kd = 0.5 }
 id = 7
 offset = 0.0
 dir = 1.0
-mit_pid = { kp = 0.0, kd = 0.5 }
+mit_pid = { kp = 80.0, kd = 0.5 }
