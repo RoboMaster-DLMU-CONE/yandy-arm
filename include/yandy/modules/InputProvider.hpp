@@ -74,7 +74,6 @@ namespace yandy::modules
             void on_serial_read(std::span<const std::byte> data);
             void on_serial_error(ssize_t e) const;
             std::unique_ptr<HySerial::Serial> m_serial;
-            NBuf<YandyControlPack, 10> m_buf;
         };
     }
 
