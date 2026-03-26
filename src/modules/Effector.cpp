@@ -153,10 +153,6 @@ private:
 
     (void)m_motor.enable();
 
-    // 记录初始位置
-    auto initialStatus = m_motor.getStatusPlain();
-    float initialPos = initialStatus.reduced_angle_rad;
-
     int stallTimeMs = 0;
     constexpr int kLoopIntervalMs = 2;
 
@@ -177,15 +173,13 @@ private:
     }
 
     auto status = m_motor.getStatusPlain();
-    float zeroPos = status.reduced_angle_rad;
-    m_offset = zeroPos - initialPos;
+    m_offset = status.reduced_angle_rad;  // 零点的实际位置作为 offset
 
-    m_logger->info("回零完成, 初始位置={:.4f} rad, 零点={:.4f} rad, offset={:.4f} rad",
-                   initialPos, zeroPos, m_offset);
+    m_logger->info("回零完成, 零点实际位置={:.4f} rad (offset)", m_offset);
 
     m_state = State::Idle;
 
-    // 张开到限位位置
+    // 张开到限位位置（0.5 相对于零点）
     m_motor.setPosRef(m_openPosition + m_offset);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
