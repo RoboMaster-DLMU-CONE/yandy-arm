@@ -8,24 +8,24 @@ simulate = false
 id = 8
 
 # 方向系数 (1.0 或 -1.0)
-dir = -1.0
+dir = 1.0
 
 # MIT 模式参数
 mit_pid = { kp = 5.0, kd = 0.5 }
 
 # MIT 模式前馈力矩 (N·m)
-mit_feedforward_torque = 0.2
+mit_feedforward_torque = 0.4
 
 # 回零参数
-zeroing_torque = 0.18             # 回零时的恒定力矩 (N·m)
-zeroing_velocity_threshold = 0.05 # 静止检测速度阈值 (rad/s)
-zeroing_stall_time_ms = 100       # 静止持续时间阈值 (ms)
+zeroing_torque = 1.2              # 回零时的恒定力矩 (N·m)
+zeroing_velocity_threshold = 0.01 # 静止检测速度阈值 (rad/s)
+zeroing_stall_time_ms = 150       # 静止持续时间阈值 (ms)
 
 # 限位参数
-open_position = 0.5  # 张开位置 (rad)
+open_position = 0.9 # 张开位置 (rad)
 
 # 碰撞检测参数
-collision_current_threshold = 3000.0 # 电流阈值 (mA)
+collision_current_threshold = 5000.0 # 电流阈值 (mA)
 
 # 仿真参数
 sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)
