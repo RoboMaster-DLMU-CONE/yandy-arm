@@ -1,5 +1,3 @@
-#include <one/PID/PidController.hpp>
-#include <one/PID/PidParams.hpp>
 #include <one/can/CanDriver.hpp>
 #include <one/motor/dji/DjiMotor.hpp>
 #include <one/motor/dji/DjiParam.hpp>
@@ -15,21 +13,6 @@
 
 namespace yandy::modules {
 
-namespace {
-
-one::pid::PidParams<> parsePidParams(const toml::table &tbl) {
-  return one::pid::PidParams<>{
-      .Kp = tbl["kp"].value<float>().value(),
-      .Ki = tbl["ki"].value<float>().value(),
-      .Kd = tbl["kd"].value<float>().value(),
-      .MaxOutput = tbl["max_output"].value<float>().value(),
-      .Deadband = tbl["deadband"].value<float>().value(),
-      .IntegralLimit = tbl["integral_limit"].value<float>().value(),
-  };
-}
-
-} // namespace
-
 namespace detail {
 
 // =============================================================================
@@ -43,8 +26,10 @@ public:
     auto tbl = toml::parse_file(EFFECTOR_CONFIG_PATH);
 
     m_motorId = tbl["id"].value<uint8_t>().value();
-    m_posPidParams = parsePidParams(*tbl["position_pid"].as_table());
-    m_angPidParams = parsePidParams(*tbl["angular_pid"].as_table());
+    float kp = tbl["mit_pid"]["kp"].value<float>().value();
+    float kd = tbl["mit_pid"]["kd"].value<float>().value();
+    m_mitKp = kp;
+    m_mitKd = kd;
 
     m_zeroingCurrentMA = tbl["zeroing_current_mA"].value<float>().value();
     m_zeroingVelocityThreshold =
@@ -60,16 +45,15 @@ public:
     m_collisionVelocityDropThreshold =
         tbl["collision_velocity_drop_threshold"].value<float>().value();
 
-    m_logger->info("配置已加载: motor_id={}, zeroing_current={:.0f}mA, "
-                   "holding_max_current={:.0f}mA",
-                   m_motorId, m_zeroingCurrentMA, m_holdingMaxCurrentMA);
+    m_logger->info("配置已加载: motor_id={}, MIT参数 kp={:.1f} kd={:.3f}, "
+                   "zeroing_current={:.0f}mA",
+                   m_motorId, kp, kd, m_zeroingCurrentMA);
 
-    one::motor::dji::Param zeroingParams = {
+    one::motor::dji::Param params = {
         .id = m_motorId,
-        .mode = one::motor::dji::AngMode{one::pid::PidParams<>{
-            .Kp = 60, .Ki = 10, .Kd = 0, .MaxOutput = m_zeroingCurrentMA}}};
+        .mode = one::motor::dji::MITMode{kp, kd}};
 
-    (void)m_motor.init(can, zeroingParams).or_else([this](auto &&e) {
+    (void)m_motor.init(can, params).or_else([this](auto &&e) {
       m_logger->critical("{}", e.message);
       throw std::runtime_error(e.message);
     });
@@ -205,15 +189,7 @@ private:
 
     m_state = State::Idle;
 
-    one::motor::dji::Param normalParams = {
-        .id = m_motorId,
-        .mode = one::motor::dji::PosAngMode{m_posPidParams, m_angPidParams}};
-
-    (void)m_motor.disable()
-        .and_then([this, &normalParams] { return m_motor.setParam(normalParams); })
-        .or_else(
-            [this](auto &&e) { m_logger->critical("设置参数失败：{}", e.message); });
-    (void)m_motor.enable();
+    // MIT 模式无需切换参数
     m_motor.setPosRef(m_posSoftMax);
   }
 
@@ -227,8 +203,8 @@ private:
   std::shared_ptr<spdlog::logger> m_logger;
 
   uint8_t m_motorId = 8;
-  one::pid::PidParams<> m_posPidParams;
-  one::pid::PidParams<> m_angPidParams;
+  float m_mitKp = 50.0f;
+  float m_mitKd = 0.1f;
 
   State m_state = State::Idle;
   float m_posMax = 0.0f;
