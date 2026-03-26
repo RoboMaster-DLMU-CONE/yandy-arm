@@ -86,8 +86,9 @@ private:
                                       // 系)
 
   // ---- 仿真视觉配置 ----
-  bool m_sim_vision_enabled{false}; // 仿真视觉是否启用
-  bool m_sim_vision_random{false};  // 是否使用随机模式
+  bool m_sim_vision_enabled{false};     // 仿真视觉是否启用
+  bool m_sim_vision_random{false};      // 是否使用随机模式
+  bool m_force_simulate_vision{false};  // 强制使用仿真视觉（即使 simulate=false）
   Eigen::Isometry3d m_sim_unit_pose{
       Eigen::Isometry3d::Identity()}; // 当前虚拟能量单元位姿
   std::array<double, 2> m_sim_x_range{};

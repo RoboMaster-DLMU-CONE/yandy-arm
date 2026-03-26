@@ -37,8 +37,17 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
 
   auto tbl = toml::parse_file(YANDY_ROBOT_CONFIG);
   m_is_simulate = tbl["simulate"].value<bool>().value();
-  if (m_is_simulate) {
-    m_logger->info("Simulate mode is on.");
+  
+  // 读取强制仿真视觉选项（允许在真实模式下使用仿真视觉）
+  m_force_simulate_vision = tbl["force_simulate_vision"].value<bool>().value_or(false);
+  
+  // 如果启用仿真模式或强制仿真视觉，加载仿真相机和视觉配置
+  if (m_is_simulate || m_force_simulate_vision) {
+    if (m_is_simulate) {
+      m_logger->info("Simulate mode is on.");
+    } else {
+      m_logger->info("force_simulate_vision is enabled (real hardware with simulated vision).");
+    }
 
     // 加载手持相机在 base_link 系下的固定位姿
     auto trans = tbl["simulate_camera"]["translation"].as_array();
@@ -162,7 +171,12 @@ void yandy::Robot::start() {
   m_logger->info("Starting Robot...");
 
   // 初始化视觉子系统
-  if (m_hik_driver.init() && m_detector.init()) {
+  // 如果 force_simulate_vision 启用，直接使用仿真视觉（即使真实相机初始化成功）
+  if (m_force_simulate_vision) {
+    m_sim_vision_enabled = true;
+    m_vision_thread = std::thread([this] { simVisionLoop(); });
+    m_logger->info("force_simulate_vision enabled, using simulated vision.");
+  } else if (m_hik_driver.init() && m_detector.init()) {
     m_vision_thread = std::thread([this] { visionLoop(); });
     m_logger->info("Vision thread launched.");
   } else if (m_is_simulate) {
@@ -283,8 +297,9 @@ void yandy::Robot::start() {
         vd.vision_valid = true;
         vd.vision_unit_pose = vis->unit_pose;
         vd.vision_unit_pose_base =
-            m_is_simulate ? m_sim_cam_pose * vis->unit_pose
-                          : m_solver.transformObjectToBase(vis->unit_pose);
+            (m_is_simulate || m_force_simulate_vision)
+                ? m_sim_cam_pose * vis->unit_pose
+                : m_solver.transformObjectToBase(vis->unit_pose);
       }
 
       m_viz_buf.write(vd);
@@ -509,7 +524,7 @@ void yandy::Robot::handleSeeking() {
 
   // 将相机坐标系下的位姿转换到基座坐标系
   Eigen::Isometry3d target_pose;
-  if (m_is_simulate) {
+  if (m_is_simulate || m_force_simulate_vision) {
     target_pose = m_sim_cam_pose * vd->unit_pose;
   } else {
     target_pose = m_solver.transformObjectToBase(vd->unit_pose);

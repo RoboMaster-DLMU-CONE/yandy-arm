@@ -1,3 +1,5 @@
+# Joint 配置
+# simulate: true = 使用仿真机械臂（FakeArmHW），false = 使用真实 CAN 电机（RealArmHW）
 simulate = false
 can_port = "can0"
 

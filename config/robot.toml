@@ -1,4 +1,12 @@
-simulate = true
+# Robot 主配置
+
+# simulate: true = 全仿真模式（仿真机械臂 + 仿真夹爪 + 仿真视觉）
+#          false = 真实硬件模式（可通过各子模块的 simulate 选项单独控制）
+simulate = false
+
+# force_simulate_vision: 强制使用仿真视觉（即使真实相机存在）
+#                        适用于：真实机械臂 + 仿真视觉的混合调试模式
+force_simulate_vision = false
 
 # 仿真模式下手持相机在 base_link 坐标系中的固定位姿
 # translation: [x, y, z] 单位 m；rpy: [roll, pitch, yaw] 单位 rad，ZYX 顺序

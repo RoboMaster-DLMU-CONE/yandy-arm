@@ -1,16 +1,14 @@
 # Effector (夹爪) 配置
 
 # 仿真模式
-simulate = true
+# simulate: true = 使用仿真夹爪（FakeEffector），false = 使用真实 CAN 夹爪（RealEffector）
+simulate = false
 
 # DJI M2006 电机 ID
 id = 8
 
-# 位置环 PID 参数
-position_pid = { kp = 40.0, ki = 0.003, kd = 0.05, max_output = 8000.0, deadband = 0.01, integral_limit = 1000.0 }
-
-# 速度环 PID 参数
-angular_pid = { kp = 5.0, ki = 0.0, kd = 0.0, max_output = 8000.0, deadband = 0.001, integral_limit = 100.0 }
+# MIT 模式参数（参考 J6 关节）
+mit_pid = { kp = 50.0, kd = 0.1 }
 
 # 回零参数
 zeroing_current_mA = 1000.0       # 回零时的恒定电流 (mA)
