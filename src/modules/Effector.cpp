@@ -26,6 +26,7 @@ public:
     auto tbl = toml::parse_file(EFFECTOR_CONFIG_PATH);
 
     m_motorId = tbl["id"].value<uint8_t>().value();
+    m_dir = tbl["dir"].value<float>().value();
     float kp = tbl["mit_pid"]["kp"].value<float>().value();
     float kd = tbl["mit_pid"]["kd"].value<float>().value();
     m_mitKp = kp;
@@ -62,7 +63,7 @@ public:
     }
     m_logger->info("张开夹爪");
     m_state = State::Opening;
-    m_motor.setPosRef(m_posSoftMin);  // 角度方向反了：最小值=张开
+    m_motor.setPosRef(m_posOpen);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
@@ -72,7 +73,7 @@ public:
     }
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
-    m_motor.setPosRef(-10.0f);  // 大负值=收缩
+    m_motor.setPosRef(m_posZero);
     m_motor.setTorRef(m_mitFeedforwardTorque);
     m_prevCurrent = 0.0f;
     m_prevVelocity = 0.0f;
@@ -84,7 +85,7 @@ public:
 
     switch (m_state) {
     case State::Opening: {
-      float posError = std::abs(m_posSoftMin - status.reduced_angle_rad);
+      float posError = std::abs(m_posOpen - status.reduced_angle_rad);
       if (posError < 0.05f) {
         m_state = State::Idle;
         m_logger->info("夹爪已张开");
@@ -143,12 +144,12 @@ public:
       return false;
     }
     auto status = m_motor.getStatusPlain();
-    return std::abs(m_posSoftMin - status.reduced_angle_rad) < 0.1f;
+    return std::abs(m_posOpen - status.reduced_angle_rad) < 0.1f;
   }
 
   [[nodiscard]] bool isClosed() override {
     auto status = m_motor.getStatusPlain();
-    return status.reduced_angle_rad < (m_posMin + 0.1f);
+    return std::abs(m_posZero - status.reduced_angle_rad) < 0.1f;
   }
 
   [[nodiscard]] State getState() const override { return m_state; }
@@ -162,8 +163,8 @@ private:
     int stallTimeMs = 0;
     constexpr int kLoopIntervalMs = 2;
 
-    // MIT 模式回零：设置负向位置参考 + 小力矩，让夹爪收缩直到堵转
-    m_motor.setPosRef(-10.0f);  // 大负值确保持续收缩
+    // MIT 模式回零：设置大正值位置参考 + 小力矩，让夹爪收缩直到堵转
+    m_motor.setPosRef(m_dir * 10.0f);  // dir=-1时为-10，让夹爪收缩
     m_motor.setTorRef(m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
@@ -179,16 +180,16 @@ private:
     }
 
     auto status = m_motor.getStatusPlain();
-    m_posMin = status.reduced_angle_rad;  // 记录收缩极限（最小值）
-    m_posSoftMin = m_posMin + m_softLimitBuffer;
+    m_posZero = status.reduced_angle_rad;  // 记录收缩极限（零点）
+    m_posOpen = m_posZero - m_dir * m_softLimitBuffer;  // 张开位置
 
-    m_logger->info("回零完成, POS_MIN = {:.4f} rad, 软限位 = {:.4f} rad",
-                   m_posMin, m_posSoftMin);
+    m_logger->info("回零完成, POS_ZERO = {:.4f} rad, POS_OPEN = {:.4f} rad",
+                   m_posZero, m_posOpen);
 
     m_state = State::Idle;
 
-    // 张开到软限位（角度方向反了：正值=张开）
-    m_motor.setPosRef(m_posSoftMin);
+    // 张开到开放位置
+    m_motor.setPosRef(m_posOpen);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
@@ -203,13 +204,14 @@ private:
   std::shared_ptr<spdlog::logger> m_logger;
 
   uint8_t m_motorId = 8;
+  float m_dir = -1.0f;
   float m_mitKp = 5.0f;
   float m_mitKd = 0.5f;
   float m_mitFeedforwardTorque = 0.2f;
 
   State m_state = State::Idle;
-  float m_posMin = 0.0f;
-  float m_posSoftMin = 0.0f;
+  float m_posZero = 0.0f;   // 收缩极限（零点）
+  float m_posOpen = 0.0f;   // 张开位置
 
   float m_prevCurrent = 0.0f;
   float m_prevVelocity = 0.0f;

@@ -7,6 +7,9 @@ simulate = false
 # DJI M2006 电机 ID
 id = 8
 
+# 方向系数 (1.0 或 -1.0)
+dir = -1.0
+
 # MIT 模式参数
 mit_pid = { kp = 5.0, kd = 0.5 }
 
