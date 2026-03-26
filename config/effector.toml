@@ -7,24 +7,22 @@ simulate = false
 # DJI M2006 电机 ID
 id = 8
 
-# MIT 模式参数（参考 J6 关节）
-mit_pid = { kp = 50.0, kd = 0.1 }
+# MIT 模式参数
+mit_pid = { kp = 5.0, kd = 0.5 }
+
+# MIT 模式前馈力矩 (N·m)
+mit_feedforward_torque = 0.2
 
 # 回零参数
-zeroing_current_mA = 1000.0       # 回零时的恒定电流 (mA)
+zeroing_torque = 0.18             # 回零时的恒定力矩 (N·m)
 zeroing_velocity_threshold = 0.05 # 静止检测速度阈值 (rad/s)
 zeroing_stall_time_ms = 100       # 静止持续时间阈值 (ms)
 
 # 软限位缓冲值 (rad)
 soft_limit_buffer = 0.1
 
-# 夹持保持时的最大电流 (mA)，决定抓取力
-holding_max_current_mA = 3000.0
-
 # 碰撞检测参数
-collision_pos_error_threshold = 0.3     # 位置误差阈值 (rad)
 collision_current_rate_threshold = 50.0 # 电流上升率阈值 (mA/周期)
-collision_velocity_drop_threshold = 0.1 # 速度下降率阈值 (rad/s 每周期)
 
 # 仿真参数
 sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)
