@@ -1,12 +1,16 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fcntl.h>
 #include <iostream>
 #include <memory>
 #include <one/can/CanDriver.hpp>
 #include <spdlog/spdlog.h>
+#include <sys/select.h>
+#include <termios.h>
 #include <thread>
 #include <toml++/toml.hpp>
+#include <unistd.h>
 #include <yandy/core/Logger.hpp>
 #include <yandy/modules/Effector.hpp>
 
@@ -16,6 +20,26 @@ using namespace std::chrono_literals;
 std::atomic<bool> g_running{true};
 
 void signal_handler(int signum) { g_running = false; }
+
+// 非阻塞读取用户输入
+bool readInput(std::string &input) {
+  fd_set fds;
+  FD_ZERO(&fds);
+  FD_SET(STDIN_FILENO, &fds);
+
+  struct timeval tv;
+  tv.tv_sec = 0;
+  tv.tv_usec = 100000; // 100ms 超时
+
+  int retval = select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv);
+  if (retval > 0 && FD_ISSET(STDIN_FILENO, &fds)) {
+    // 有输入可用，读取一行
+    if (std::getline(std::cin, input)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const char *stateToString(modules::Effector::State state) {
   switch (state) {
@@ -35,6 +59,8 @@ const char *stateToString(modules::Effector::State state) {
 int main() {
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
+
+  core::init_logging();
 
   auto logger = core::create_logger("EffectorTest", spdlog::level::info);
   logger->info("Starting Effector Test...");
@@ -83,28 +109,32 @@ int main() {
 
   // 主循环处理用户输入
   std::string input;
+  logger->info("Enter command:");
   while (g_running) {
-    std::cout << "> ";
-    std::cin >> input;
+    std::cout << "> " << std::flush;
 
-    if (input == "o" || input == "open") {
-      effector->openClaw();
-    } else if (input == "c" || input == "close") {
-      effector->closeClaw();
-    } else if (input == "r" || input == "release") {
-      effector->release();
-    } else if (input == "s" || input == "status") {
-      auto state = effector->getState();
-      std::cout << "State: " << stateToString(state)
-                << " | isOpen: " << effector->isOpen()
-                << " | isClosed: " << effector->isClosed()
-                << " | isHolding: " << effector->isHolding() << std::endl;
-    } else if (input == "q" || input == "quit" || input == "exit") {
-      g_running = false;
-      break;
-    } else {
-      std::cout << "Unknown command: " << input << std::endl;
+    if (readInput(input)) {
+      // 有输入
+      if (input == "o" || input == "open") {
+        effector->openClaw();
+      } else if (input == "c" || input == "close") {
+        effector->closeClaw();
+      } else if (input == "r" || input == "release") {
+        effector->release();
+      } else if (input == "s" || input == "status") {
+        auto state = effector->getState();
+        std::cout << "State: " << stateToString(state)
+                  << " | isOpen: " << effector->isOpen()
+                  << " | isClosed: " << effector->isClosed()
+                  << " | isHolding: " << effector->isHolding() << std::endl;
+      } else if (input == "q" || input == "quit" || input == "exit") {
+        g_running = false;
+        break;
+      } else if (!input.empty()) {
+        std::cout << "Unknown command: " << input << std::endl;
+      }
     }
+    // readInput 超时后会返回 false，继续循环检查 g_running
   }
 
   logger->info("Stopping...");
