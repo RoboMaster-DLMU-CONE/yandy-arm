@@ -21,11 +21,11 @@ zeroing_torque = 0.18             # 回零时的恒定力矩 (N·m)
 zeroing_velocity_threshold = 0.05 # 静止检测速度阈值 (rad/s)
 zeroing_stall_time_ms = 100       # 静止持续时间阈值 (ms)
 
-# 软限位缓冲值 (rad)
-soft_limit_buffer = 0.1
+# 限位参数
+open_position = 0.5  # 张开位置 (rad)
 
 # 碰撞检测参数
-collision_current_rate_threshold = 50.0 # 电流上升率阈值 (mA/周期)
+collision_current_threshold = 3000.0 # 电流阈值 (mA)
 
 # 仿真参数
 sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)

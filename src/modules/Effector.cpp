@@ -37,9 +37,9 @@ public:
     m_zeroingVelocityThreshold =
         tbl["zeroing_velocity_threshold"].value<float>().value();
     m_zeroingStallTimeMs = tbl["zeroing_stall_time_ms"].value<int>().value();
-    m_softLimitBuffer = tbl["soft_limit_buffer"].value<float>().value();
-    m_collisionCurrentRateThreshold =
-        tbl["collision_current_rate_threshold"].value<float>().value();
+    m_openPosition = tbl["open_position"].value<float>().value();
+    m_collisionCurrentThreshold =
+        tbl["collision_current_threshold"].value<float>().value();
 
     m_logger->info("配置已加载: motor_id={}, MIT参数 kp={:.1f} kd={:.3f}, "
                    "zeroing_torque={:.2f}N·m",
@@ -63,7 +63,7 @@ public:
     }
     m_logger->info("张开夹爪");
     m_state = State::Opening;
-    m_motor.setPosRef(m_posOpen);
+    m_motor.setPosRef(m_openPosition + m_offset);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
@@ -73,10 +73,9 @@ public:
     }
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
-    m_motor.setPosRef(m_posZero);
+    m_motor.setPosRef(0.0f + m_offset);
     m_motor.setTorRef(m_mitFeedforwardTorque);
     m_prevCurrent = 0.0f;
-    m_prevVelocity = 0.0f;
     m_firstUpdateInClosing = true;
   }
 
@@ -85,7 +84,7 @@ public:
 
     switch (m_state) {
     case State::Opening: {
-      float posError = std::abs(m_posOpen - status.reduced_angle_rad);
+      float posError = std::abs((m_openPosition + m_offset) - status.reduced_angle_rad);
       if (posError < 0.05f) {
         m_state = State::Idle;
         m_logger->info("夹爪已张开");
@@ -95,21 +94,16 @@ public:
 
     case State::Closing: {
       float currentPos = status.reduced_angle_rad;
-      float currentVel = status.reduced_angular_rad_s;
       float currentMA = status.real_current_mA;
 
       if (m_firstUpdateInClosing) {
         m_prevCurrent = currentMA;
-        m_prevVelocity = currentVel;
         m_firstUpdateInClosing = false;
         break;
       }
 
-      float currentRate = currentMA - m_prevCurrent;
-
-      // 碰撞检测：速度接近0且电流上升
-      bool collision = (std::abs(currentVel) < m_zeroingVelocityThreshold) &&
-                       (currentRate > m_collisionCurrentRateThreshold);
+      // 碰撞检测：电流超过阈值
+      bool collision = std::abs(currentMA) > m_collisionCurrentThreshold;
 
       if (collision) {
         m_logger->info(
@@ -119,7 +113,6 @@ public:
       }
 
       m_prevCurrent = currentMA;
-      m_prevVelocity = currentVel;
       break;
     }
 
@@ -144,12 +137,12 @@ public:
       return false;
     }
     auto status = m_motor.getStatusPlain();
-    return std::abs(m_posOpen - status.reduced_angle_rad) < 0.1f;
+    return std::abs((m_openPosition + m_offset) - status.reduced_angle_rad) < 0.1f;
   }
 
   [[nodiscard]] bool isClosed() override {
     auto status = m_motor.getStatusPlain();
-    return std::abs(m_posZero - status.reduced_angle_rad) < 0.1f;
+    return std::abs(m_offset - status.reduced_angle_rad) < 0.1f;
   }
 
   [[nodiscard]] State getState() const override { return m_state; }
@@ -160,11 +153,15 @@ private:
 
     (void)m_motor.enable();
 
+    // 记录初始位置
+    auto initialStatus = m_motor.getStatusPlain();
+    float initialPos = initialStatus.reduced_angle_rad;
+
     int stallTimeMs = 0;
     constexpr int kLoopIntervalMs = 2;
 
-    // MIT 模式回零：设置大正值位置参考 + 小力矩，让夹爪收缩直到堵转
-    m_motor.setPosRef(m_dir * 10.0f);  // dir=-1时为-10，让夹爪收缩
+    // 往正方向（闭合）施加力矩直到堵转
+    m_motor.setPosRef(10.0f);
     m_motor.setTorRef(m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
@@ -180,16 +177,16 @@ private:
     }
 
     auto status = m_motor.getStatusPlain();
-    m_posZero = status.reduced_angle_rad;  // 记录收缩极限（零点）
-    m_posOpen = m_posZero - m_dir * m_softLimitBuffer;  // 张开位置
+    float zeroPos = status.reduced_angle_rad;
+    m_offset = zeroPos - initialPos;
 
-    m_logger->info("回零完成, POS_ZERO = {:.4f} rad, POS_OPEN = {:.4f} rad",
-                   m_posZero, m_posOpen);
+    m_logger->info("回零完成, 初始位置={:.4f} rad, 零点={:.4f} rad, offset={:.4f} rad",
+                   initialPos, zeroPos, m_offset);
 
     m_state = State::Idle;
 
-    // 张开到开放位置
-    m_motor.setPosRef(m_posOpen);
+    // 张开到限位位置
+    m_motor.setPosRef(m_openPosition + m_offset);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
@@ -210,18 +207,16 @@ private:
   float m_mitFeedforwardTorque = 0.2f;
 
   State m_state = State::Idle;
-  float m_posZero = 0.0f;   // 收缩极限（零点）
-  float m_posOpen = 0.0f;   // 张开位置
+  float m_offset = 0.0f;        // 校准偏移量
+  float m_openPosition = 0.5f;  // 张开位置
 
   float m_prevCurrent = 0.0f;
-  float m_prevVelocity = 0.0f;
   bool m_firstUpdateInClosing = true;
 
-  float m_zeroingTorque = 0.18f;  // 回零力矩 (N·m)
+  float m_zeroingTorque = 0.18f;
   float m_zeroingVelocityThreshold = 0.05f;
   int m_zeroingStallTimeMs = 100;
-  float m_softLimitBuffer = 0.1f;
-  float m_collisionCurrentRateThreshold = 50.0f;
+  float m_collisionCurrentThreshold = 3000.0f;
 };
 
 // =============================================================================
