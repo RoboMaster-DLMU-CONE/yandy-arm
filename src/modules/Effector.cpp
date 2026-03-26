@@ -63,7 +63,7 @@ public:
     }
     m_logger->info("张开夹爪");
     m_state = State::Opening;
-    m_motor.setPosRef(m_openPosition + m_offset);
+    m_motor.setPosRef(m_offset - m_dir * m_openPosition);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
@@ -73,7 +73,7 @@ public:
     }
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
-    m_motor.setPosRef(0.0f + m_offset);
+    m_motor.setPosRef(m_offset);
     m_motor.setTorRef(m_mitFeedforwardTorque);
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
@@ -84,7 +84,8 @@ public:
 
     switch (m_state) {
     case State::Opening: {
-      float posError = std::abs((m_openPosition + m_offset) - status.reduced_angle_rad);
+      float targetPos = m_offset - m_dir * m_openPosition;
+      float posError = std::abs(targetPos - status.reduced_angle_rad);
       if (posError < 0.05f) {
         m_state = State::Idle;
         m_logger->info("夹爪已张开");
@@ -137,7 +138,8 @@ public:
       return false;
     }
     auto status = m_motor.getStatusPlain();
-    return std::abs((m_openPosition + m_offset) - status.reduced_angle_rad) < 0.1f;
+    float targetPos = m_offset - m_dir * m_openPosition;
+    return std::abs(targetPos - status.reduced_angle_rad) < 0.1f;
   }
 
   [[nodiscard]] bool isClosed() override {
@@ -156,8 +158,8 @@ private:
     int stallTimeMs = 0;
     constexpr int kLoopIntervalMs = 2;
 
-    // 往正方向（闭合）施加力矩直到堵转
-    m_motor.setPosRef(10.0f);
+    // 往闭合方向施加力矩直到堵转（考虑 dir 方向）
+    m_motor.setPosRef(m_dir * 10.0f);
     m_motor.setTorRef(m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
@@ -179,8 +181,8 @@ private:
 
     m_state = State::Idle;
 
-    // 张开到限位位置（0.5 相对于零点）
-    m_motor.setPosRef(m_openPosition + m_offset);
+    // 张开到限位位置（0.5 相对于零点，考虑 dir）
+    m_motor.setPosRef(m_offset - m_dir * m_openPosition);
     m_motor.setTorRef(m_mitFeedforwardTorque);
   }
 
