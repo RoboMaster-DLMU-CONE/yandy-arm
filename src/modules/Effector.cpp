@@ -32,6 +32,7 @@ public:
     m_mitKp = kp;
     m_mitKd = kd;
     m_mitFeedforwardTorque = tbl["mit_feedforward_torque"].value<float>().value();
+    m_holdingTorque = tbl["holding_torque"].value<float>().value();
 
     m_zeroingTorque = tbl["zeroing_torque"].value<float>().value();
     m_zeroingVelocityThreshold =
@@ -189,7 +190,7 @@ private:
   void enterHolding(float holdPosition) {
     m_state = State::Holding;
     m_motor.setPosRef(holdPosition);
-    m_motor.setTorRef(m_mitFeedforwardTorque);
+    m_motor.setTorRef(m_holdingTorque);
     m_logger->info("进入保持模式，保持位置 = {:.4f} rad", holdPosition);
   }
 
@@ -201,6 +202,7 @@ private:
   float m_mitKp = 5.0f;
   float m_mitKd = 0.5f;
   float m_mitFeedforwardTorque = 0.2f;
+  float m_holdingTorque = 1.0f;
 
   State m_state = State::Idle;
   float m_offset = 0.0f;        // 校准偏移量
