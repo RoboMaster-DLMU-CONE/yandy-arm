@@ -73,14 +73,14 @@ public:
           },
           status);
 
-      // q_model = Dir * (q_motor - Offset)
-      state.q[i] = m_dirs[i] * (raw_pos - m_offsets[i]);
+      // q_model = Dir * ((q_motor - Offset) / Gear)
+      state.q[i] = m_dirs[i] * ((raw_pos - m_offsets[i]) / m_gears[i]);
 
-      // v_model = Dir * v_motor
-      state.v[i] = m_dirs[i] * raw_vel;
+      // v_model = Dir * (v_motor / Gear)
+      state.v[i] = m_dirs[i] * (raw_vel / m_gears[i]);
 
-      // tau_model = Dir * tau_motor
-      state.tau[i] = m_dirs[i] * raw_tau;
+      // tau_model = Dir * (tau_motor * Gear)
+      state.tau[i] = m_dirs[i] * (raw_tau * m_gears[i]);
     }
   }
 
@@ -89,9 +89,9 @@ public:
       if (!m_motors[i])
         continue;
 
-      double target_pos = (m_dirs[i] * cmd.q_des[i]) + m_offsets[i];
-      double target_vel = m_dirs[i] * cmd.v_des[i];
-      double ff_torque = m_dirs[i] * cmd.tau_ff[i];
+      double target_pos = m_offsets[i] + m_dirs[i] * cmd.q_des[i] * m_gears[i];
+      double target_vel = m_dirs[i] * cmd.v_des[i] * m_gears[i];
+      double ff_torque = m_dirs[i] * cmd.tau_ff[i] / m_gears[i];
 
       (void)m_motors[i]->setUnitRefs(target_pos * rad, target_vel * rad / s,
                                      ff_torque * N * m);
@@ -129,6 +129,7 @@ private:
         JOINT_CONFIG_PATH);
 
     auto tbl = toml::parse_file(JOINT_CONFIG_PATH);
+    m_gears.fill(1.0f);
     parse_dm_motor(tbl["joint_1"], 0);
     parse_dm_motor(tbl["joint_2"], 1);
     parse_dm_motor(tbl["joint_3"], 2);
@@ -145,6 +146,7 @@ private:
     master_id = joint_node["master_id"].value<uint16_t>().value();
     m_dirs[joint_index] = joint_node["dir"].value<float>().value();
     m_offsets[joint_index] = joint_node["offset"].value<float>().value();
+    m_gears[joint_index] = joint_node["gear_ratio"].value<float>().value_or(1.0f);
 
     kp = joint_node["mit_pid"]["kp"].value<float>().value();
     kd = joint_node["mit_pid"]["kd"].value<float>().value();
@@ -172,9 +174,9 @@ private:
     default:;
     }
     m_logger->info("J{} DM motor parsed: can_id: {}, master_id: {}, dir: {}, "
-                   "offset: {}, MIT params: {}, {}",
+                   "offset: {}, gear: {}, MIT params: {}, {}",
                    joint_index + 1, can_id, master_id, m_dirs[joint_index],
-                   m_offsets[joint_index], kp, kd);
+                   m_offsets[joint_index], m_gears[joint_index], kp, kd);
   }
 
   void parse_gm6020_motor(toml::v3::node_view<toml::v3::node> joint_node,
@@ -189,9 +191,9 @@ private:
     m_motors[joint_index] = std::make_unique<GM6020_Voltage>(
         m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
-    m_logger->info("J{} GM6020 motor parsed: dir: {}, offset: {}",
+    m_logger->info("J{} GM6020 motor parsed: dir: {}, offset: {}, gear: {}",
                    joint_index + 1, m_dirs[joint_index],
-                   m_offsets[joint_index]);
+                   m_offsets[joint_index], m_gears[joint_index]);
   }
 
   void parse_m2006_motor(toml::v3::node_view<toml::v3::node> joint_node,
@@ -206,15 +208,16 @@ private:
     m_motors[joint_index] =
         std::make_unique<M2006>(m_driver, dji::Param{id, dji::MITMode{kp, kd}});
 
-    m_logger->info("J{} M2006 motor parsed: dir: {}, offset: {}",
+    m_logger->info("J{} M2006 motor parsed: dir: {}, offset: {}, gear: {}",
                    joint_index + 1, m_dirs[joint_index],
-                   m_offsets[joint_index]);
+                   m_offsets[joint_index], m_gears[joint_index]);
   }
 
   one::can::CanDriver &m_driver;
   std::array<std::unique_ptr<IMotor>, common::JOINT_NUM> m_motors;
   std::array<float, common::JOINT_NUM> m_dirs{};
   std::array<float, common::JOINT_NUM> m_offsets{};
+  std::array<float, common::JOINT_NUM> m_gears{};
   std::shared_ptr<spdlog::logger> m_logger;
 };
 
