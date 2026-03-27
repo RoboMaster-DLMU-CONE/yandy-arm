@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <random>
+#include <cmath>
 #include <toml++/toml.hpp>
 #include <yandy/Robot.hpp>
 
@@ -522,7 +523,13 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
     return false;
   }
 
-  const auto &q_goal = q_sol.value();
+  // 将解复制为可修改的向量，并将角度调整到与当前关节角最近的等价角，避免 ±2π 跳变
+  auto q_goal = q_sol.value();
+  for (int i = 0; i < static_cast<int>(common::ARM_JOINT_NUM); ++i) {
+    const double delta = m_arm_state.q[i] - q_goal[i];
+    const double n = std::round(delta / (2.0 * M_PI));
+    q_goal[i] += 2.0 * M_PI * n;
+  }
 
   // 路径碰撞检测 (使用当前云台状态)
   // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动
@@ -548,7 +555,27 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
 void yandy::Robot::handleManual() {
   // 保险：离开 Store 模式时（不论是正常完成还是手动取消）恢复 base_link 碰撞检测
   withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(true); });
-  const auto pack = m_input.getLatestCommand();
+
+  // 如果刚刚退出 Fetch 模式，忽略一次来自手柄/遥控的自动位姿下发，避免回到视觉起始点
+  if (m_ignore_next_manual) {
+    m_ignore_next_manual = false;
+    // 继续执行当前轨迹/动力学补偿，不改变目标
+    m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+    m_arm_hw.write(m_arm_cmd);
+    return;
+  }
+
+  auto pack = m_input.getLatestCommand();
+
+  // 如果需要限制返回过程中的 roll，使用当前末端的 roll 替换用户输入的 roll
+  if (m_limit_return_roll) {
+    Eigen::Matrix3d R_curr = withSolver([](auto& s) { return s.getEndEffectorPose().rotation(); });
+    Eigen::Vector3d rpy_curr = R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
+    const double roll_keep = rpy_curr[2];
+    pack.roll = static_cast<float>(roll_keep);
+    // 仅在首次手动目标中应用限制
+    m_limit_return_roll = false;
+  }
 
   // 构造目标位姿 (基座坐标系)
   Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
@@ -743,27 +770,32 @@ void yandy::Robot::handleExtracting() {
 }
 
 void yandy::Robot::handleWithdrawing() {
-  // 撤回到预抓取点（直接规划，不受 standoff 约束）
-  const Eigen::Vector3d pregrasp_pos =
-      m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
+  // 直接结束撤回阶段：不要回到预抓取点，立即退出 FetchingMode 并回到手动控制
+  m_logger->info("Withdrawing: skipping return-to-pregrasp and exiting fetch mode immediately");
 
-  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
-    return;
+  // 停止 planner 并清空内部状态
+  m_planner->brake();
+  resetFetchState();
+  m_ompl_pending = false;
+  m_ompl_executing = false;
+
+  // 保持当前关节位置，避免自动下发移动
+  m_arm_cmd.q_des = m_arm_state.q;
+  m_arm_cmd.v_des.setZero();
+  m_arm_hw.write(m_arm_cmd);
+
+  // 忽略下一次 manual 目标下发，避免回到视觉起始点
+  m_ignore_next_manual = true;
+  // 限制返回 Manual 时末端 roll 变化（首次 Manual 有效）
+  m_limit_return_roll = true;
+
+  // 生成仿真下一个目标（如果启用）
+  if (m_sim_vision_enabled && m_sim_vision_random) {
+    generateRandomUnitPose();
   }
 
-  // 检查是否完成撤回
-  const Eigen::Vector3d ee_pos = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
-  if ((ee_pos - pregrasp_pos).norm() < 0.02 && m_planner->isFinished()) {
-    m_logger->info("Withdrawal complete, exiting fetch mode");
-
-    // 仿真模式下随机生成下一个能量单元位姿
-    if (m_sim_vision_enabled && m_sim_vision_random) {
-      generateRandomUnitPose();
-    }
-
-    // 抓取完成后自动退出 FetchingMode (发送 CMD_SWITCH_FETCH)
-    m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_FETCH);
-  }
+  // 退出 FetchingMode
+  m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_FETCH);
 }
 
 void yandy::Robot::resetFetchState() {
@@ -836,25 +868,33 @@ Eigen::Vector3d yandy::Robot::computeApproachDirection(double roll,
 }
 
 bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
-                                    const Eigen::Vector3d &approach_dir) {
+                                    const Eigen::Vector3d &approach_dir,
+                                    bool use5DoF) {
   // 从 approach_dir 构造完整 6DoF 目标位姿：
   // 将世界 Z 轴 [0,0,1] 旋转到 approach_dir 的最短旋转，
-  // 对 approach=[1,0,0] 恰好给出 Ry(π/2)，即 rpy=[0,π/2,0]
+  // 但对工具绕 Z 轴的 roll 采用当前末端的 roll 值以避免翻转
   const Eigen::Vector3d z_des = approach_dir.normalized();
-  const Eigen::Vector3d up = Eigen::Vector3d::UnitZ();
+
+  // 获取当前末端的 roll（使用 Z-Y-X Euler: [yaw, pitch, roll]）
+  Eigen::Matrix3d R_curr = withSolver([](auto& s) { return s.getEndEffectorPose().rotation(); });
+  Eigen::Vector3d rpy_curr = R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
+  const double roll_keep = rpy_curr[2];
+
+  // 构建一个以 z_des 为 Z 轴、并以 roll_keep 绕 Z 轴旋转的坐标系
+  Eigen::Vector3d ref = Eigen::Vector3d::UnitX();
+  if (std::abs(ref.dot(z_des)) > 0.99) ref = Eigen::Vector3d::UnitY();
+  Eigen::Vector3d base_x = (ref - z_des * (ref.dot(z_des))).normalized();
+  Eigen::Vector3d base_y = z_des.cross(base_x).normalized();
+
+  const double c = std::cos(roll_keep);
+  const double s = std::sin(roll_keep);
+  Eigen::Vector3d x_rot = c * base_x + s * base_y; // X 轴经 roll 旋转后方向
+  Eigen::Vector3d y_rot = z_des.cross(x_rot).normalized();
+
   Eigen::Matrix3d R_des;
-  const Eigen::Vector3d rot_axis = up.cross(z_des);
-  const double sin_a = rot_axis.norm();
-  const double cos_a = up.dot(z_des);
-  if (sin_a < 1e-6) {
-    // 已对齐或反向：对齐用 Identity，反向绕 X 旋转 π
-    R_des = (cos_a > 0) ? Eigen::Matrix3d::Identity()
-                        : Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())
-                              .toRotationMatrix();
-  } else {
-    R_des = Eigen::AngleAxisd(std::acos(cos_a), rot_axis.normalized())
-                .toRotationMatrix();
-  }
+  R_des.col(0) = x_rot;
+  R_des.col(1) = y_rot;
+  R_des.col(2) = z_des;
 
   m_target_pose = Eigen::Isometry3d::Identity();
   m_target_pose.translate(target_pos);
@@ -878,12 +918,20 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
     return false;
   }
 
-  // 用 6DoF IK 求解（5DoF 叉积误差在 approach=[1,0,0] 时退化，改用 6DoF）
+  // 优先尝试 6DoF IK；若失败或显式要求 5DoF，则尝试 5DoF IK（约束位置 + 方向，绕轴自由旋转）
   auto q_sol = withSolver([&](auto& s) { return s.solveIK(m_target_pose, m_arm_state.q, 0.01); });
+  if (!q_sol || use5DoF) {
+    // 尝试使用 5DoF IK（位置 + 方向约束，绕方向轴自由旋转）
+    auto q5_sol = withSolver([&](auto& s) { return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, 0.01); });
+    if (q5_sol) {
+      q_sol = q5_sol;
+    }
+  }
+
   if (!q_sol) {
     static int ik_fail_count = 0;
     if (++ik_fail_count % 100 == 1) {
-      m_logger->warn("5DoF IK failed for target [{:.3f}, {:.3f}, {:.3f}], "
+      m_logger->warn("IK (6DoF/5DoF) failed for target [{:.3f}, {:.3f}, {:.3f}], "
                      "approach [{:.3f}, {:.3f}, {:.3f}]",
                      target_pos.x(), target_pos.y(), target_pos.z(),
                      approach_dir.x(), approach_dir.y(), approach_dir.z());
@@ -893,7 +941,13 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
     return false;
   }
 
-  const auto &q_goal = q_sol.value();
+  // 将解复制为可修改的向量，并将角度调整到与当前关节角最近的等价角，避免 ±2π 跳变
+  auto q_goal = q_sol.value();
+  for (int i = 0; i < static_cast<int>(common::ARM_JOINT_NUM); ++i) {
+    const double delta = m_arm_state.q[i] - q_goal[i];
+    const double n = std::round(delta / (2.0 * M_PI));
+    q_goal[i] += 2.0 * M_PI * n;
+  }
 
   // 路径碰撞检测
   // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动

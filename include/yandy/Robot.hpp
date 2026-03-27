@@ -125,6 +125,11 @@ private:
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
 
+  // 在退出 Fetching 模式后忽略下一次 manual 目标下发，避免回到视觉初始点
+  bool m_ignore_next_manual{false};
+  // 在退出 Fetching 模式后限制返回 Manual 时末端 roll 变化（只在首次 Manual 有效）
+  bool m_limit_return_roll{false};
+
   int m_stability_window{10};          // 稳定性检测窗口 (帧数)
   double m_stability_threshold{0.005}; // 位置方差阈值 (m)
   double m_pregrasp_distance{0.05};    // 预抓取距离 (m)
@@ -172,7 +177,8 @@ private:
   bool isPoseStable() const;
   Eigen::Vector3d computeApproachDirection(double roll, double pitch) const;
   bool solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
-                        const Eigen::Vector3d &approach_dir);
+                        const Eigen::Vector3d &approach_dir,
+                        bool use5DoF = false);
 
   // 从 YandyControlPack 提取云台状态
   void updateGimbalFromPack(const YandyControlPack &pack);
