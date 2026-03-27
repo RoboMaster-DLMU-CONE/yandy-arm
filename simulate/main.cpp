@@ -190,10 +190,10 @@ int main() {
       const auto &vp = vd.vision_unit_pose_base;
       const auto &t = vp.translation();
 
-      // STL 圆柱轴沿 STL-Y；stl_correction 将 STL-Y 映射到 body-(-X)，
-      // 使 body-Z（逼近方向）与圆柱轴垂直：rpy=[0,π/2,0] 时圆柱竖直、从 X 方向逼近。
+      // STL 圆柱轴沿 STL-Y；需将 STL-Y 对齐到 body-X（瓶口方向）
+      // 绕 STL-Z 旋转 -90° 使 Y→X
       const Eigen::Matrix3d stl_correction =
-          Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+          Eigen::AngleAxisd(-M_PI_2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
       const Eigen::Quaterniond q(vp.rotation() * stl_correction);
 
       rec.log_static(
