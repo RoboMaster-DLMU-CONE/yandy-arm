@@ -247,76 +247,115 @@ namespace yandy::modules
         ob::RealVectorBounds bounds(DOF);
 
         // 从 Pinocchio model 读取机械臂关节限位 (使用正确的 Pinocchio 索引)
+        bool invalid_bounds = false;
         for (int i = 0; i < DOF; ++i)
         {
             const int idx = common::ARM_Q_INDICES[i];
-            bounds.setLow(i, m_model.lowerPositionLimit[idx]);
-            bounds.setHigh(i, m_model.upperPositionLimit[idx]);
+            const double low = m_model.lowerPositionLimit[idx];
+            const double high = m_model.upperPositionLimit[idx];
+            // 记录到 bounds（即便无效也先记录，随后检测）
+            bounds.setLow(i, low);
+            bounds.setHigh(i, high);
+            if (!(low < high)) {
+                m_logger->error("OMPL invalid joint limits for arm dim {} (model idx {}): lower={} >= upper={}", i, idx, low, high);
+                invalid_bounds = true;
+            }
         }
+
+        if (invalid_bounds) {
+            // 返回无效的规划结果，避免抛出 OMPL 异常导致进程终止
+            m_logger->warn("OMPL plan aborted due to invalid joint limits (see errors)");
+            plan.valid = false;
+            return plan;
+        }
+
+        // 打印模型信息与关节限位（便于诊断）
+        m_logger->info("OMPL model.nq={}, DOF={} ", m_model.nq, DOF);
+        for (int i = 0; i < DOF; ++i) {
+            const int idx = common::ARM_Q_INDICES[i];
+            m_logger->info("OMPL bounds dim {} -> model idx {} : lower={}, upper={}", i, idx,
+                           bounds.low[i], bounds.high[i]);
+        }
+
         space->setBounds(bounds);
 
-        og::SimpleSetup ss(space);
+        try {
+            og::SimpleSetup ss(space);
 
-        // 碰撞检测回调 — 使用线程私有的 Pinocchio data
-        // 将 6D 机械臂配置 + 3D 云台状态组装成完整 9D 进行碰撞检测
-        ss.setStateValidityChecker([this, &gimbal_q](const ob::State* state) -> bool
-        {
-            const auto* s = state->as<ob::RealVectorStateSpace::StateType>();
-            common::VectorArm arm_q;
-            for (int i = 0; i < DOF; ++i)
-                arm_q[i] = s->values[i];
-
-            // 组装完整 9D 配置
-            const common::VectorJ full_q = common::combineJoints(arm_q, gimbal_q);
-
-            return !pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true);
-        });
-
-        // 设置起点和终点
-        ob::ScopedState<ob::RealVectorStateSpace> start(space);
-        ob::ScopedState<ob::RealVectorStateSpace> goal(space);
-        for (int i = 0; i < DOF; ++i)
-        {
-            start[i] = q_start[i];
-            goal[i] = q_goal[i];
-        }
-        ss.setStartAndGoalStates(start, goal);
-
-        // 使用 RRTConnect
-        auto planner = std::make_shared<og::RRTConnect>(ss.getSpaceInformation());
-        planner->setRange(m_config.rrt_range);
-        ss.setPlanner(planner);
-
-        auto solved = ss.solve(m_config.planning_timeout);
-
-        if (solved)
-        {
-            ss.simplifySolution();
-            auto& path = ss.getSolutionPath();
-            
-            // 插值路径以获得更平滑的轨迹
-            path.interpolate(m_config.path_interpolation_points);  // 至少20个waypoints
-            
-            auto& states = path.getStates();
-
-            plan.count = std::min(static_cast<int>(states.size()), TrajectoryPlan::MAX_WAYPOINTS);
-            for (int i = 0; i < plan.count; ++i)
+            // 碰撞检测回调 — 使用线程私有的 Pinocchio data
+            // 将 6D 机械臂配置 + 3D 云台状态组装成完整 9D 进行碰撞检测
+            ss.setStateValidityChecker([this, &gimbal_q](const ob::State* state) -> bool
             {
-                const auto* s = states[i]->as<ob::RealVectorStateSpace::StateType>();
-                for (int j = 0; j < DOF; ++j)
-                {
-                    plan.waypoints[i][j] = s->values[j];
-                }
+                const auto* s = state->as<ob::RealVectorStateSpace::StateType>();
+                common::VectorArm arm_q;
+                for (int i = 0; i < DOF; ++i)
+                    arm_q[i] = s->values[i];
+
+                // 组装完整 9D 配置
+                const common::VectorJ full_q = common::combineJoints(arm_q, gimbal_q);
+
+                return !pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true);
+            });
+
+            // 设置起点和终点
+            ob::ScopedState<ob::RealVectorStateSpace> start(space);
+            ob::ScopedState<ob::RealVectorStateSpace> goal(space);
+            for (int i = 0; i < DOF; ++i)
+            {
+                start[i] = q_start[i];
+                goal[i] = q_goal[i];
             }
-            plan.valid = true;
-            m_logger->info("OMPL solved: {} waypoints, length={:.3f}", plan.count, path.length());
-        }
-        else
-        {
-            m_logger->warn("OMPL failed to find a solution");
+            ss.setStartAndGoalStates(start, goal);
+
+            // 使用 RRTConnect
+            auto planner = std::make_shared<og::RRTConnect>(ss.getSpaceInformation());
+            planner->setRange(m_config.rrt_range);
+            ss.setPlanner(planner);
+
+            auto solved = ss.solve(m_config.planning_timeout);
+
+            if (solved)
+            {
+                ss.simplifySolution();
+                auto& path = ss.getSolutionPath();
+                
+                // 插值路径以获得更平滑的轨迹
+                path.interpolate(m_config.path_interpolation_points);  // 至少20个waypoints
+                
+                auto& states = path.getStates();
+
+                plan.count = std::min(static_cast<int>(states.size()), TrajectoryPlan::MAX_WAYPOINTS);
+                for (int i = 0; i < plan.count; ++i)
+                {
+                    const auto* s = states[i]->as<ob::RealVectorStateSpace::StateType>();
+                    for (int j = 0; j < DOF; ++j)
+                    {
+                        plan.waypoints[i][j] = s->values[j];
+                    }
+                }
+                plan.valid = true;
+                m_logger->info("OMPL solved: {} waypoints, length={:.3f}", plan.count, path.length());
+            }
+            else
+            {
+                m_logger->warn("OMPL failed to find a solution");
+                plan.valid = false;
+            }
+        } catch (const ompl::Exception& e) {
+            m_logger->error("OMPL threw exception: {}", e.what());
             plan.valid = false;
+            return plan;
+        } catch (const std::exception& e) {
+            m_logger->error("Unexpected exception during OMPL: {}", e.what());
+            plan.valid = false;
+            return plan;
+        } catch (...) {
+            m_logger->error("Unknown error during OMPL planning");
+            plan.valid = false;
+            return plan;
         }
 
+        // 返回结果（正常或捕获异常后都会到此）
         return plan;
     }
 }
