@@ -623,8 +623,16 @@ void yandy::Robot::handleSeeking() {
   if (isPoseStable()) {
     // 锁定目标（一旦锁定，后续不再改变）
     m_locked_target_pos = target_pose.translation();
-    m_locked_approach_dir = target_pose.rotation().col(2);
-    m_locked_extract_dir = -target_pose.rotation().col(0);
+    
+    // 视觉位姿的坐标系定义（PnP 解算结果）：
+    //   - Z 轴：垂直于能量单元顶面（瓶口方向）
+    //   - X/Y 轴：在顶面平面内
+    //
+    // 夹爪抓取策略：
+    //   - 逼近方向 (approach_dir): 固定为 base_link 的 +X 轴方向（从机器人往目标逼近）
+    //   - 提取方向 (extract_dir): 瓶口反方向（-Z 轴），瓶口朝上就向下提
+    m_locked_approach_dir = Eigen::Vector3d::UnitX();        // +X 轴 = 从机器人往目标逼近
+    m_locked_extract_dir  = -target_pose.rotation().col(2);  // -Z 轴 = 瓶口反方向
     m_locked_target_valid = true; // 标记已锁定
 
     m_current_standoff = m_pregrasp_distance;
@@ -634,10 +642,10 @@ void yandy::Robot::handleSeeking() {
     m_logger->info("Target position: [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_target_pos.x(), m_locked_target_pos.y(),
                    m_locked_target_pos.z());
-    m_logger->info("Approach direction: [{:.3f}, {:.3f}, {:.3f}]",
+    m_logger->info("Approach direction (+X): [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_approach_dir.x(), m_locked_approach_dir.y(),
                    m_locked_approach_dir.z());
-    m_logger->info("Extract direction: [{:.3f}, {:.3f}, {:.3f}]",
+    m_logger->info("Extract direction (-Z, opposite to bottle): [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_extract_dir.x(), m_locked_extract_dir.y(),
                    m_locked_extract_dir.z());
 
@@ -764,8 +772,8 @@ void yandy::Robot::resetFetchState() {
   m_current_standoff = m_pregrasp_distance;
   m_current_extract_offset = 0.0;
   m_locked_target_pos.setZero();
-  m_locked_approach_dir = Eigen::Vector3d::UnitZ();
-  m_locked_extract_dir = -Eigen::Vector3d::UnitX();
+  m_locked_approach_dir = Eigen::Vector3d::UnitX();        // +X 轴 = 从机器人往目标逼近
+  m_locked_extract_dir = -Eigen::Vector3d::UnitZ();        // -Z 轴 = 默认向下
   m_locked_target_valid = false; // 清除锁定标志
 }
 
