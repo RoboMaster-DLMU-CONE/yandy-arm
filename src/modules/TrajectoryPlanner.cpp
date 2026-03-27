@@ -114,8 +114,8 @@ namespace yandy::modules
 
         if (result == ruckig::Result::Finished)
         {
-            // 如果还有后续 waypoint，切换到下一个
-            if (!m_waypoints.empty() && m_waypoint_idx < static_cast<int>(m_waypoints.size()))
+            // 修复：检查是否还有未执行的 waypoint（索引从 0 开始）
+            if (m_waypoint_idx < static_cast<int>(m_waypoints.size()))
             {
                 advanceToNextWaypoint();
             }
@@ -160,8 +160,8 @@ namespace yandy::modules
         if (!plan.has_value())
             return 0;  // 无结果
 
-        if (!plan->valid)
-            return -1;  // 规划失败
+        if (!plan->valid || plan->count <= 0)
+            return -1;  // 规划失败或无效数据
 
         m_waypoints.clear();
         m_waypoints.reserve(plan->count);
@@ -175,6 +175,11 @@ namespace yandy::modules
         if (!m_waypoints.empty())
         {
             advanceToNextWaypoint();
+        }
+        else
+        {
+            m_logger->error("OMPL plan loaded but waypoints empty!");
+            return -1;
         }
 
         m_logger->info("Loaded OMPL plan with {} waypoints", plan->count);

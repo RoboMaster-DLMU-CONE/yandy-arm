@@ -249,8 +249,6 @@ void yandy::Robot::start() {
     // 6. 检查 OMPL 规划是否执行完毕
     if (m_ompl_executing && m_planner->isFinished()) {
       m_ompl_executing = false;
-      // 执行完成后也设置短冷却，避免立即重新检测碰撞
-      m_ompl_fail_cooldown = 50; // 约0.2秒
       m_logger->info("OMPL plan execution finished");
     }
 

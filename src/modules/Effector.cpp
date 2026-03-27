@@ -31,7 +31,8 @@ public:
     float kd = tbl["mit_pid"]["kd"].value<float>().value();
     m_mitKp = kp;
     m_mitKd = kd;
-    m_mitFeedforwardTorque = tbl["mit_feedforward_torque"].value<float>().value();
+    m_mitFeedforwardTorque =
+        tbl["mit_feedforward_torque"].value<float>().value();
     m_holdingTorque = tbl["holding_torque"].value<float>().value();
 
     m_zeroingTorque = tbl["zeroing_torque"].value<float>().value();
@@ -46,9 +47,8 @@ public:
                    "zeroing_torque={:.2f}N·m",
                    m_motorId, kp, kd, m_zeroingTorque);
 
-    one::motor::dji::Param params = {
-        .id = m_motorId,
-        .mode = one::motor::dji::MITMode{kp, kd}};
+    one::motor::dji::Param params = {.id = m_motorId,
+                                     .mode = one::motor::dji::MITMode{kp, kd}};
 
     (void)m_motor.init(can, params).or_else([this](auto &&e) {
       m_logger->critical("{}", e.message);
@@ -176,7 +176,7 @@ private:
     }
 
     auto status = m_motor.getStatusPlain();
-    m_offset = status.reduced_angle_rad;  // 零点的实际位置作为 offset
+    m_offset = status.reduced_angle_rad; // 零点的实际位置作为 offset
 
     m_logger->info("回零完成, 零点实际位置={:.4f} rad (offset)", m_offset);
 
@@ -205,8 +205,8 @@ private:
   float m_holdingTorque = 1.0f;
 
   State m_state = State::Idle;
-  float m_offset = 0.0f;        // 校准偏移量
-  float m_openPosition = 0.5f;  // 张开位置
+  float m_offset = 0.0f;       // 校准偏移量
+  float m_openPosition = 0.5f; // 张开位置
 
   float m_prevCurrent = 0.0f;
   bool m_firstUpdateInClosing = true;
@@ -227,15 +227,15 @@ public:
 
     auto tbl = toml::parse_file(EFFECTOR_CONFIG_PATH);
 
-    m_softLimitBuffer = tbl["soft_limit_buffer"].value<float>().value();
     m_posMax = tbl["sim_pos_max"].value<float>().value();
     m_moveSpeed = tbl["sim_move_speed"].value<float>().value();
 
     m_posSoftMax = m_posMax - m_softLimitBuffer;
     m_currentPos = m_posSoftMax; // 初始位置为张开状态
 
-    m_logger->info("仿真模式初始化: POS_MAX={:.2f}, 软限位={:.2f}, 移动速度={:.2f}",
-                   m_posMax, m_posSoftMax, m_moveSpeed);
+    m_logger->info(
+        "仿真模式初始化: POS_MAX={:.2f}, 软限位={:.2f}, 移动速度={:.2f}",
+        m_posMax, m_posSoftMax, m_moveSpeed);
   }
 
   void openClaw() override {
