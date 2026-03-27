@@ -623,10 +623,18 @@ void yandy::Robot::handleSeeking() {
     return;
   }
 
-  // 尚未稳定，持续追踪（使用 5DoF IK）
-  const Eigen::Vector3d approach_dir = target_pose.rotation().col(2);
+  // 尚未稳定：只追踪位置，使用固定的竖直向上逼近方向（避免转圈）
+  // 使用历史平均位置作为目标
+  Eigen::Vector3d mean_pos = Eigen::Vector3d::Zero();
+  for (const auto &p : m_pose_history) {
+    mean_pos += p.translation();
+  }
+  mean_pos /= static_cast<double>(m_pose_history.size());
+
+  // 使用固定的竖直向上逼近方向（Z 轴），避免方向变化导致的转圈
+  const Eigen::Vector3d approach_dir = Eigen::Vector3d::UnitZ();
   const Eigen::Vector3d pregrasp_pos =
-      target_pose.translation() - approach_dir * m_pregrasp_distance;
+      mean_pos - approach_dir * m_pregrasp_distance;
 
   solveAndPlan5DoF(pregrasp_pos, approach_dir);
 }
@@ -636,9 +644,16 @@ void yandy::Robot::handlePreGrasp() {
   const Eigen::Vector3d pregrasp_pos =
       m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
 
+  static int pregrasp_success_count = 0; // 成功帧计数
+
   if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
+    // IK 或规划失败，重置成功计数
+    pregrasp_success_count = 0;
     return;
   }
+  
+  // 成功时增加成功计数
+  ++pregrasp_success_count;
 
   // 检查是否到达预抓取点
   const Eigen::Vector3d ee_pos = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
@@ -648,6 +663,12 @@ void yandy::Robot::handlePreGrasp() {
   {
     m_logger->info("Reached pre-grasp point, distance: {:.3f}m", dist);
     m_fetch_phase = FetchPhase::Approaching;
+    pregrasp_success_count = 0;
+  } else if (pregrasp_success_count > 500) {
+    // 超过 2 秒仍未到达，强制切换阶段（可能到达判断条件太严格）
+    m_logger->warn("PreGrasp timeout, forcing transition to Approaching");
+    m_fetch_phase = FetchPhase::Approaching;
+    pregrasp_success_count = 0;
   }
 }
 
@@ -746,20 +767,45 @@ bool yandy::Robot::isPoseStable() const {
   }
 
   // 计算位置均值
-  Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+  Eigen::Vector3d mean_pos = Eigen::Vector3d::Zero();
   for (const auto &p : m_pose_history) {
-    mean += p.translation();
+    mean_pos += p.translation();
   }
-  mean /= static_cast<double>(m_pose_history.size());
+  mean_pos /= static_cast<double>(m_pose_history.size());
 
   // 计算位置方差
-  double variance = 0.0;
+  double pos_variance = 0.0;
   for (const auto &p : m_pose_history) {
-    variance += (p.translation() - mean).squaredNorm();
+    pos_variance += (p.translation() - mean_pos).squaredNorm();
   }
-  variance /= static_cast<double>(m_pose_history.size());
+  pos_variance /= static_cast<double>(m_pose_history.size());
 
-  return std::sqrt(variance) < m_stability_threshold;
+  // 计算方向稳定性：检查 Z 轴（逼近方向）的方差
+  // 使用单位四元数的角度差来衡量方向变化
+  double orient_variance = 0.0;
+  Eigen::Quaterniond mean_q = Eigen::Quaterniond::Identity();
+  
+  // 简单方法：检查各帧 Z 轴方向的一致性
+  Eigen::Vector3d mean_z = Eigen::Vector3d::Zero();
+  for (const auto &p : m_pose_history) {
+    mean_z += p.rotation().col(2); // Z 轴
+  }
+  mean_z.normalize();
+  
+  for (const auto &p : m_pose_history) {
+    const Eigen::Vector3d z_axis = p.rotation().col(2).normalized();
+    // 计算与平均方向的夹角余弦值
+    const double cos_theta = mean_z.dot(z_axis);
+    // 角度差（弧度），cos=1 表示同向，cos=0 表示垂直
+    orient_variance += std::acos(std::max(-1.0, std::min(1.0, cos_theta)));
+  }
+  orient_variance /= static_cast<double>(m_pose_history.size());
+
+  // 位置方差阈值 + 方向角度阈值（10 度 ≈ 0.174 rad）
+  constexpr double orient_threshold = 0.174;
+  
+  return (std::sqrt(pos_variance) < m_stability_threshold) && 
+         (orient_variance < orient_threshold);
 }
 
 Eigen::Vector3d yandy::Robot::computeApproachDirection(double roll,
