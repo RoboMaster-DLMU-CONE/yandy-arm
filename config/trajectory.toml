@@ -1,0 +1,26 @@
+# Trajectory Planner 配置
+# 用于调整机械臂运动速度和加速度参数
+
+# 最大关节速度 (rad/s)
+# 建议范围：3.0 ~ 8.0 (URDF 物理限位为 8 rad/s)
+max_velocity = 4.0
+
+# 最大关节加速度 (rad/s^2)
+# 建议范围：10.0 ~ 40.0
+max_acceleration = 15.0
+
+# 最大加加速度 (rad/s^3)
+# 影响运动平滑度，建议范围：50.0 ~ 200.0
+max_jerk = 80.0
+
+# OMPL 规划超时时间 (秒)
+# 超过此时间未找到路径则返回失败
+planning_timeout = 2.0
+
+# OMPL RRTConnect 步长
+# 减小步长可获得更精细的路径，但会增加规划时间
+rrt_range = 0.5
+
+# OMPL 路径插值点数
+# 至少 20 个点以保证轨迹平滑
+path_interpolation_points = 20

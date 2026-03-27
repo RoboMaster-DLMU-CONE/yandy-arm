@@ -20,20 +20,22 @@ namespace yandy::modules
 
     TrajectoryPlanner::TrajectoryPlanner(double dt,
                                          const pinocchio::Model& model,
-                                         const pinocchio::GeometryModel& geom_model)
+                                         const pinocchio::GeometryModel& geom_model,
+                                         const TrajectoryConfig& config)
         : m_dt(dt)
         , m_ruckig(dt)
         , m_model(model)
         , m_data(m_model)
         , m_geom_model(geom_model)
         , m_geom_data(m_geom_model)
+        , m_config(config)
     {
         m_logger = core::create_logger("TrajPlanner", spdlog::level::info);
 
         // Ruckig 运动学约束 (只针对机械臂 6 DoF)
-        m_ruckig_input.max_velocity.setConstant(6.0);       // rad/s (URDF limit: 8)
-        m_ruckig_input.max_acceleration.setConstant(20.0);   // rad/s^2
-        m_ruckig_input.max_jerk.setConstant(100.0);          // rad/s^3
+        m_ruckig_input.max_velocity.setConstant(config.max_velocity);
+        m_ruckig_input.max_acceleration.setConstant(config.max_acceleration);
+        m_ruckig_input.max_jerk.setConstant(config.max_jerk);
 
         m_ruckig_input.current_position.setZero();
         m_ruckig_input.current_velocity.setZero();
@@ -44,7 +46,8 @@ namespace yandy::modules
 
         // 启动 OMPL 后台线程
         m_plan_thread = std::thread([this] { planLoop(); });
-        m_logger->info("TrajectoryPlanner initialized, dt={:.4f}s, DOF={}", dt, DOF);
+        m_logger->info("TrajectoryPlanner initialized, dt={:.4f}s, DOF={}, max_vel={:.2f}, max_acc={:.2f}, max_jerk={:.2f}",
+                       dt, DOF, config.max_velocity, config.max_acceleration, config.max_jerk);
     }
 
     TrajectoryPlanner::~TrajectoryPlanner()
@@ -281,10 +284,10 @@ namespace yandy::modules
 
         // 使用 RRTConnect
         auto planner = std::make_shared<og::RRTConnect>(ss.getSpaceInformation());
-        planner->setRange(0.5);  // 减小步长，更精细的路径搜索
+        planner->setRange(m_config.rrt_range);
         ss.setPlanner(planner);
 
-        auto solved = ss.solve(2.0); // 最多 2 秒
+        auto solved = ss.solve(m_config.planning_timeout);
 
         if (solved)
         {
@@ -292,7 +295,7 @@ namespace yandy::modules
             auto& path = ss.getSolutionPath();
             
             // 插值路径以获得更平滑的轨迹
-            path.interpolate(20);  // 至少20个waypoints
+            path.interpolate(m_config.path_interpolation_points);  // 至少20个waypoints
             
             auto& states = path.getStates();
 

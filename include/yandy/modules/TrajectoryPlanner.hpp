@@ -36,12 +36,24 @@ namespace yandy::modules
         bool pending{false};
     };
 
+    // 轨迹规划器配置参数
+    struct TrajectoryConfig
+    {
+        double max_velocity{6.0};           // rad/s
+        double max_acceleration{20.0};      // rad/s^2
+        double max_jerk{100.0};             // rad/s^3
+        double planning_timeout{2.0};       // s
+        double rrt_range{0.5};              // OMPL RRTConnect 步长
+        int path_interpolation_points{20};  // OMPL 路径插值点数
+    };
+
     class TrajectoryPlanner
     {
     public:
         TrajectoryPlanner(double dt,
                           const pinocchio::Model& model,
-                          const pinocchio::GeometryModel& geom_model);
+                          const pinocchio::GeometryModel& geom_model,
+                          const TrajectoryConfig& config = TrajectoryConfig{});
         ~TrajectoryPlanner();
 
         TrajectoryPlanner(const TrajectoryPlanner&) = delete;
@@ -83,6 +95,7 @@ namespace yandy::modules
         static constexpr int DOF = common::ARM_JOINT_NUM;  // 只规划机械臂 6 DoF
 
         double m_dt;
+        TrajectoryConfig m_config;  // 轨迹规划配置参数
 
         // ---- Ruckig (只针对机械臂 6 DoF) ----
         ruckig::Ruckig<DOF, ruckig::EigenVector> m_ruckig;

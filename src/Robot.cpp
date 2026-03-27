@@ -35,10 +35,27 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
   }
 
   // 构造 TrajectoryPlanner (需要 m_solver_var 中 model 的引用)
+  // 先从 trajectory.toml 读取配置参数
+  modules::TrajectoryConfig traj_config;
+  try {
+    auto traj_tbl = toml::parse_file(YANDY_CONFIG_PATH "trajectory.toml");
+    traj_config.max_velocity = traj_tbl["max_velocity"].value<double>().value_or(6.0);
+    traj_config.max_acceleration = traj_tbl["max_acceleration"].value<double>().value_or(20.0);
+    traj_config.max_jerk = traj_tbl["max_jerk"].value<double>().value_or(100.0);
+    traj_config.planning_timeout = traj_tbl["planning_timeout"].value<double>().value_or(2.0);
+    traj_config.rrt_range = traj_tbl["rrt_range"].value<double>().value_or(0.5);
+    traj_config.path_interpolation_points = traj_tbl["path_interpolation_points"].value<int>().value_or(20);
+    m_logger->info("Loaded trajectory config: max_vel={:.2f}, max_acc={:.2f}, max_jerk={:.2f}",
+                   traj_config.max_velocity, traj_config.max_acceleration, traj_config.max_jerk);
+  } catch (const toml::parse_error& e) {
+    m_logger->warn("Failed to parse trajectory.toml, using default config: {}", e.what());
+  }
+
   m_planner = std::make_unique<modules::TrajectoryPlanner>(
       DT,
       withSolver([](auto& s) -> pinocchio::Model& { return s.getModel(); }),
-      withSolver([](auto& s) -> const pinocchio::GeometryModel& { return s.getGeometryModel(); }));
+      withSolver([](auto& s) -> const pinocchio::GeometryModel& { return s.getGeometryModel(); }),
+      traj_config);
 
   // 注册 FSM 回调: 一次性硬件动作由 action 直接驱动
   modules::detail::FSMCallbacks cb;
@@ -565,6 +582,14 @@ void yandy::Robot::handleFetching() {
 }
 
 void yandy::Robot::handleSeeking() {
+  // 如果已经锁定了目标位姿，直接使用锁定位姿，不再读取视觉数据
+  if (m_locked_target_valid) {
+    const Eigen::Vector3d pregrasp_pos =
+        m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
+    solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir);
+    return;
+  }
+
   auto vd = m_vision_buf.try_read();
   if (!vd.has_value() || !vd->valid) {
     // 无有效视觉数据，保持当前位置 + 动力学补偿
@@ -596,79 +621,61 @@ void yandy::Robot::handleSeeking() {
 
   // 检查稳定性
   if (isPoseStable()) {
-    // 锁定目标
+    // 锁定目标（一旦锁定，后续不再改变）
     m_locked_target_pos = target_pose.translation();
-
-    // 从旋转矩阵提取逼近方向 (末端 Z 轴) 和提取方向 (末端 X 轴，即瓶口反方向)
     m_locked_approach_dir = target_pose.rotation().col(2);
     m_locked_extract_dir = -target_pose.rotation().col(0);
+    m_locked_target_valid = true; // 标记已锁定
 
     m_current_standoff = m_pregrasp_distance;
     m_pose_history.clear();
 
-    m_logger->info("Pose stable, locking target at [{:.3f}, {:.3f}, {:.3f}]",
+    m_logger->info("★★★ TARGET LOCKED ★★★");
+    m_logger->info("Target position: [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_target_pos.x(), m_locked_target_pos.y(),
                    m_locked_target_pos.z());
     m_logger->info("Approach direction: [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_approach_dir.x(), m_locked_approach_dir.y(),
                    m_locked_approach_dir.z());
-
-    const Eigen::Vector3d pregrasp =
-        m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
-    m_logger->info("Pre-grasp position: [{:.3f}, {:.3f}, {:.3f}]", pregrasp.x(),
-                   pregrasp.y(), pregrasp.z());
+    m_logger->info("Extract direction: [{:.3f}, {:.3f}, {:.3f}]",
+                   m_locked_extract_dir.x(), m_locked_extract_dir.y(),
+                   m_locked_extract_dir.z());
 
     // 切换到 PreGrasp 阶段
     m_fetch_phase = FetchPhase::PreGrasp;
-    return;
+  } else {
+    // 尚未稳定：移动到历史平均位置上方，使用竖直向上方向
+    Eigen::Vector3d mean_pos = Eigen::Vector3d::Zero();
+    for (const auto &p : m_pose_history) {
+      mean_pos += p.translation();
+    }
+    mean_pos /= static_cast<double>(m_pose_history.size());
+
+    const Eigen::Vector3d approach_dir = Eigen::Vector3d::UnitZ();
+    const Eigen::Vector3d pregrasp_pos =
+        mean_pos - approach_dir * m_pregrasp_distance;
+
+    solveAndPlan5DoF(pregrasp_pos, approach_dir);
   }
-
-  // 尚未稳定：只追踪位置，使用固定的竖直向上逼近方向（避免转圈）
-  // 使用历史平均位置作为目标
-  Eigen::Vector3d mean_pos = Eigen::Vector3d::Zero();
-  for (const auto &p : m_pose_history) {
-    mean_pos += p.translation();
-  }
-  mean_pos /= static_cast<double>(m_pose_history.size());
-
-  // 使用固定的竖直向上逼近方向（Z 轴），避免方向变化导致的转圈
-  const Eigen::Vector3d approach_dir = Eigen::Vector3d::UnitZ();
-  const Eigen::Vector3d pregrasp_pos =
-      mean_pos - approach_dir * m_pregrasp_distance;
-
-  solveAndPlan5DoF(pregrasp_pos, approach_dir);
 }
 
 void yandy::Robot::handlePreGrasp() {
-  // 移动到预抓取点
+  // 移动到预抓取点（位姿已锁定，不再改变）
   const Eigen::Vector3d pregrasp_pos =
       m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
 
-  static int pregrasp_success_count = 0; // 成功帧计数
-
   if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
-    // IK 或规划失败，重置成功计数
-    pregrasp_success_count = 0;
+    // IK 或规划失败，保持当前位置继续尝试
     return;
   }
-  
-  // 成功时增加成功计数
-  ++pregrasp_success_count;
 
   // 检查是否到达预抓取点
   const Eigen::Vector3d ee_pos = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
   const double dist = (ee_pos - pregrasp_pos).norm();
 
-  if (dist < 0.01 && m_planner->isFinished()) // 10mm 阈值 + 轨迹完成
-  {
+  if (dist < 0.01 && m_planner->isFinished()) { // 10mm 阈值 + 轨迹完成
     m_logger->info("Reached pre-grasp point, distance: {:.3f}m", dist);
     m_fetch_phase = FetchPhase::Approaching;
-    pregrasp_success_count = 0;
-  } else if (pregrasp_success_count > 500) {
-    // 超过 2 秒仍未到达，强制切换阶段（可能到达判断条件太严格）
-    m_logger->warn("PreGrasp timeout, forcing transition to Approaching");
-    m_fetch_phase = FetchPhase::Approaching;
-    pregrasp_success_count = 0;
   }
 }
 
@@ -759,6 +766,7 @@ void yandy::Robot::resetFetchState() {
   m_locked_target_pos.setZero();
   m_locked_approach_dir = Eigen::Vector3d::UnitZ();
   m_locked_extract_dir = -Eigen::Vector3d::UnitX();
+  m_locked_target_valid = false; // 清除锁定标志
 }
 
 bool yandy::Robot::isPoseStable() const {
@@ -911,12 +919,24 @@ void yandy::Robot::handleStore() {
 
   const bool is_deposit = m_fsm.hasMineralAttached();
 
+  // 诊断日志：打印 store_frame 位姿和实际末端位置
+  m_logger->info("Store frame[{}]: pos=[{:.3f}, {:.3f}, {:.3f}]",
+                 m_store_pose_index,
+                 sp.translation().x(), sp.translation().y(), sp.translation().z());
+
   if (is_deposit) {
     // 存矿: Approaching（上方）→ AtTarget（store位置）→ 开爪 → 退出
     switch (m_store_phase) {
     case StorePhase::Approaching: {
+      m_logger->info("Store (deposit): moving to above_pose [{:.3f}, {:.3f}, {:.3f}]",
+                     above_pose.translation().x(), above_pose.translation().y(), above_pose.translation().z());
       if (!solveAndPlan(above_pose)) return;
       const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
+      m_logger->info("Store (deposit): actual EE pos [{:.3f}, {:.3f}, {:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
+                     ee.x(), ee.y(), ee.z(),
+                     ee.x() - above_pose.translation().x(),
+                     ee.y() - above_pose.translation().y(),
+                     ee.z() - above_pose.translation().z());
       if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached above-store, lowering to store frame");
         m_store_phase = StorePhase::AtTarget;
@@ -924,8 +944,15 @@ void yandy::Robot::handleStore() {
       break;
     }
     case StorePhase::AtTarget: {
+      m_logger->info("Store (deposit): moving to store_frame [{:.3f}, {:.3f}, {:.3f}]",
+                     sp.translation().x(), sp.translation().y(), sp.translation().z());
       if (!solveAndPlan(sp)) return;
       const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
+      m_logger->info("Store (deposit): actual EE pos [{:.3f}, {:.3f}, {:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
+                     ee.x(), ee.y(), ee.z(),
+                     ee.x() - sp.translation().x(),
+                     ee.y() - sp.translation().y(),
+                     ee.z() - sp.translation().z());
       if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached store position, opening claw");
         m_effector.openClaw();
@@ -940,8 +967,15 @@ void yandy::Robot::handleStore() {
     // 取矿: AtTarget（store位置）→ 闭爪 → Retracting（上方）→ 退出
     switch (m_store_phase) {
     case StorePhase::AtTarget: {
+      m_logger->info("Store (retrieve): moving to store_frame [{:.3f}, {:.3f}, {:.3f}]",
+                     sp.translation().x(), sp.translation().y(), sp.translation().z());
       if (!solveAndPlan(sp)) return;
       const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
+      m_logger->info("Store (retrieve): actual EE pos [{:.3f}, {:.3f}, {:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
+                     ee.x(), ee.y(), ee.z(),
+                     ee.x() - sp.translation().x(),
+                     ee.y() - sp.translation().y(),
+                     ee.z() - sp.translation().z());
       if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached store position, closing claw");
         m_effector.closeClaw();
@@ -950,8 +984,15 @@ void yandy::Robot::handleStore() {
       break;
     }
     case StorePhase::Retracting: {
+      m_logger->info("Store (retrieve): moving to above_pose [{:.3f}, {:.3f}, {:.3f}]",
+                     above_pose.translation().x(), above_pose.translation().y(), above_pose.translation().z());
       if (!solveAndPlan(above_pose)) return;
       const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
+      m_logger->info("Store (retrieve): actual EE pos [{:.3f}, {:.3f}, {:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
+                     ee.x(), ee.y(), ee.z(),
+                     ee.x() - above_pose.translation().x(),
+                     ee.y() - above_pose.translation().y(),
+                     ee.z() - above_pose.translation().z());
       if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: lifted store item, exiting store mode");
         withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(true); });

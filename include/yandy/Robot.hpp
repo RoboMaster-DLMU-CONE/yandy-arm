@@ -138,6 +138,7 @@ private:
       Eigen::Vector3d::UnitZ()};                // 锁定的逼近方向
   Eigen::Vector3d m_locked_extract_dir{
       -Eigen::Vector3d::UnitX()};               // 锁定的提取方向 (= 锁定位姿 -R.col(0) = 瓶口反方向)
+  bool m_locked_target_valid{false};            // 目标位姿是否已锁定
   double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
   double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
 
