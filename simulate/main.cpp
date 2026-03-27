@@ -19,9 +19,13 @@
 using namespace yandy::common;
 
 static std::atomic<bool> g_running{true};
+static yandy::Robot* g_robot_ptr{nullptr}; // 用于信号处理中调用 stop()
 
 static void signal_handler(int) {
   g_running.store(false, std::memory_order_release);
+  if (g_robot_ptr) {
+    g_robot_ptr->stop(); // 直接停止机器人，避免 join 阻塞
+  }
 }
 
 // 加载 STL/mesh 文件并注册到 Rerun
@@ -126,6 +130,7 @@ int main() {
   one::can::CanDriver can(can_port);
 
   yandy::Robot robot(can);
+  g_robot_ptr = &robot; // 注册全局指针，用于信号处理
   std::thread robot_thread([&robot] { robot.start(); });
 
   // ---- 可视化主循环 ----
@@ -228,5 +233,6 @@ int main() {
 
   robot.stop();
   robot_thread.join();
+  g_robot_ptr = nullptr; // 清除全局指针
   return 0;
 }

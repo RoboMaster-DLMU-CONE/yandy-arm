@@ -35,6 +35,7 @@ target_link_libraries(yandy_arm_solver
         pinocchio::pinocchio
         ompl::ompl
         ruckig
+        tomlplusplus::tomlplusplus
 )
 
 add_library(yandy_arm_trajectory_planner SHARED modules/TrajectoryPlanner.cpp)

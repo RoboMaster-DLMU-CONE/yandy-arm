@@ -56,8 +56,12 @@ namespace yandy::modules
     {
         m_plan_running.store(false, std::memory_order_release);
         m_plan_cv.notify_one();
-        if (m_plan_thread.joinable())
+        if (m_plan_thread.joinable()) {
+            // 使用限时 join 避免长时间阻塞
+            // 注意：C++ 标准库没有 timed_join，这里只能普通 join
+            // 但 planLoop 会在下次 check 时退出，OMPL 规划最多 2 秒
             m_plan_thread.join();
+        }
     }
 
     // ================================================================
@@ -211,8 +215,14 @@ namespace yandy::modules
                 m_plan_request.pending = false;
             }
 
+            // 执行 OMPL 规划，但需要定期检查停止信号
+            // 由于 runOMPL 内部无法中断，我们只在调用前后检查
             auto result = runOMPL(req.q_start, req.q_goal);
-            m_plan_result_buf.write(std::move(result));
+            
+            // 只在仍然运行时写入结果 (避免停止后写入无效数据)
+            if (m_plan_running.load(std::memory_order_relaxed)) {
+                m_plan_result_buf.write(std::move(result));
+            }
         }
 
         m_logger->info("OMPL plan thread exited");

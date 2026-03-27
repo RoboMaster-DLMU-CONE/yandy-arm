@@ -21,9 +21,9 @@ enum class YandyControlCmd : uint8_t {
   CMD_SWITCH_GRIP = 0x20, // 手动切换夹爪 (Gripper Toggle)
 
   // === 抓取流程内部指令 (由 Robot 自动触发) ===
-  CMD_POSE_STABLE = 0x30,    // 视觉测量稳定 (Seeking -> PreGrasp)
-  CMD_PREGRASP_DONE = 0x31,  // 到达预抓取点 (PreGrasp -> Approaching)
-  CMD_GRASP_DONE = 0x32,     // 完成抓取 (Approaching -> exit)
+  CMD_POSE_STABLE = 0x30,   // 视觉测量稳定 (Seeking -> PreGrasp)
+  CMD_PREGRASP_DONE = 0x31, // 到达预抓取点 (PreGrasp -> Approaching)
+  CMD_GRASP_DONE = 0x32,    // 完成抓取 (Approaching -> exit)
 
   // === 调试/修正指令 ===
   CMD_TOGGLE_HELD = 0x80, // 强制修改“持有矿石”状态
@@ -103,8 +103,29 @@ struct __attribute__((packed)) YandyControlPack {
   float gimbal_yaw;
   float gimbal_pitch;
 
+  // === 底盘传感器数据 (来自下位机) ===
+  // IMU 比力 (specific force = a_real - g), 底盘 body frame, 单位 m/s²
+  // 静止水平时: ax≈0, ay≈0, az≈+9.81 (Z轴朝上)
+  float ax; // X 方向线性比力
+  float ay; // Y 方向线性比力
+  float az; // Z 方向线性比力
+
+  // 底盘角速度, 底盘 body frame, 单位 rad/s
+  float gx; // 绕 X 轴角速度 (roll rate)
+  float gy; // 绕 Y 轴角速度 (pitch rate)
+  float gz; // 绕 Z 轴角速度 (yaw rate)
+
+  // 底盘姿态四元数 (传感器融合估计, world → chassis)
+  float qw; // 四元数 W 分量 (实部)
+  float qx; // 四元数 X 分量
+  float qy; // 四元数 Y 分量
+  float qz; // 四元数 Z 分量
+
   YandyControlCmd cmd;
 };
+static_assert(sizeof(YandyControlPack) == 77,
+              "YandyControlPack size mismatch — update Rust packet.rs and "
+              "lower computer firmware");
 
 template <>
 struct RPL::Meta::PacketTraits<YandyControlPack>

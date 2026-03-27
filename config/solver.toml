@@ -1,0 +1,17 @@
+# DynamicsSolver 配置
+# config/solver.toml
+
+# 启用浮动底盘模型 (pinocchio::JointModelFreeFlyer)
+# true  → 实例化 DynamicsSolver<true>
+#           - computeDynamics() 将底盘 IMU 数据纳入 RNEA，补偿底盘运动引起的惯性力
+#           - 需要 URDF 中的 base_link 与世界坐标系之间通过 FreeFlyer 关节相连
+# false → 实例化 DynamicsSolver<false> (默认)
+#           - computeDynamics() 退化为 computeGravity()，行为与旧版完全一致
+floating_base = true
+
+# 启用麦轮底盘线速度补偿 (仅在 floating_base = true 时生效)
+# 当底盘以恒定速度运动时, 科里奥利力/离心力会影响机械臂力矩
+# true  → 在 computeDynamics() 中将底盘线速度代入 RNEA 的 Coriolis 项
+#          注意: 需要下位机在 YandyControlPack 中提供可靠的底盘线速度数据 (预留扩展)
+# false → 底盘线速度置零, 仅补偿重力和线性加速度惯性力
+mecanum_vel_compensation = true

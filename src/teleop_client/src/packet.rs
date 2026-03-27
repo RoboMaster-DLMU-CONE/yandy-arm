@@ -28,17 +28,43 @@ impl YandyControlCmd {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct YandyControlPack {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-    pub gimbal_z: f32,
-    pub gimbal_yaw: f32,
-    pub gimbal_pitch: f32,
-    pub cmd: u8,
+    // ── 原有字段 (offsets 0-36) ─────────────────────────────────
+    pub x:            f32,  // 末端位置 X (m)
+    pub y:            f32,  // 末端位置 Y (m)
+    pub z:            f32,  // 末端位置 Z (m)
+    pub roll:         f32,  // 末端姿态 roll (rad)
+    pub pitch:        f32,  // 末端姿态 pitch (rad)
+    pub yaw:          f32,  // 末端姿态 yaw (rad)
+    pub gimbal_z:     f32,  // 云台 Z 轴位置 (m)
+    pub gimbal_yaw:   f32,  // 云台 yaw (rad)
+    pub gimbal_pitch: f32,  // 云台 pitch (rad)
+
+    // ── 底盘传感器数据 (offsets 37-76) ─────────────────────────
+    // IMU 比力 (specific force = a_real - g), body frame, 单位 m/s²
+    // 静止水平时: ax≈0, ay≈0, az≈+9.81
+    pub ax: f32,  // 底盘线性比力 X
+    pub ay: f32,  // 底盘线性比力 Y
+    pub az: f32,  // 底盘线性比力 Z
+
+    // 底盘角速度, body frame, 单位 rad/s
+    pub gx: f32,  // 绕 X 轴角速度 (roll rate)
+    pub gy: f32,  // 绕 Y 轴角速度 (pitch rate)
+    pub gz: f32,  // 绕 Z 轴角速度 (yaw rate)
+
+    // 底盘姿态四元数 (传感器融合估计, world → chassis)
+    pub qw: f32,  // W (实部)
+    pub qx: f32,  // X
+    pub qy: f32,  // Y
+    pub qz: f32,  // Z
+
+    pub cmd:          u8,   // 控制指令枚举
 }
+
+// 编译期大小验证 — 必须与 C++ Types.hpp 中的 YandyControlPack 一致 (77 字节)
+const _: () = assert!(
+    core::mem::size_of::<YandyControlPack>() == 77,
+    "YandyControlPack size mismatch! Must match C++ Types.hpp (77 bytes)."
+);
 
 impl Default for YandyControlPack {
     fn default() -> Self {
@@ -53,6 +79,10 @@ impl Default for YandyControlPack {
             gimbal_yaw: 0.0,
             gimbal_pitch: 0.0,
             cmd: YandyControlCmd::None as u8,
+            // 新增底盘字段: 静止水平初始值
+            ax: 0.0, ay: 0.0, az: 9.81,  // IMU 比力: 静止时 Z≈+g
+            gx: 0.0, gy: 0.0, gz: 0.0,
+            qw: 1.0, qx: 0.0, qy: 0.0, qz: 0.0,  // identity quaternion
         }
     }
 }

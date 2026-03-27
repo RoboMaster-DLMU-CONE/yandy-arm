@@ -46,11 +46,10 @@ int main() {
   one::can::CanDriver can(can_port);
   auto arm_hw = std::make_unique<modules::ArmHW>(can);
 
-  // Initialize Dynamics Solver
-  logger->info("Initializing DynamicsSolver...");
-  auto solver = std::make_unique<modules::DynamicsSolver>();
+  logger->info("Initializing DynamicsSolver (fixed-base)...");
+  auto solver = std::make_unique<modules::DynamicsSolver<true>>();
 
-  // Enable Motors
+  // Enable
   logger->info("Enabling motors...");
   arm_hw->enable();
 

@@ -7,6 +7,7 @@
 #include <memory>
 #include <random>
 #include <thread>
+#include <variant>
 
 #include <yandy/common/NBuf.hpp>
 #include <yandy/modules/ArmHW.hpp>
@@ -58,9 +59,20 @@ private:
 
   // ---- Modules ----
   modules::ArmHW m_arm_hw;
-  modules::DynamicsSolver m_solver;
+
+  // DynamicsSolver 通过 optional<variant> 实现运行时固定/浮动底盘选择
+  // 使用 optional 而非裸 variant 的原因:
+  //   std::variant<A,B> 在成员初始化阶段会 default-construct 第一个候选类型 A，
+  //   导致构造函数体 emplace<B> 时 A 的 spdlog logger 名称仍留在全局注册表，
+  //   进而使 B 的构造因 "logger already exists" 崩溃。
+  //   std::optional 初始为 nullopt，不构造任何子对象，彻底规避此问题。
+  // 具体类型由 config/solver.toml 中的 floating_base 选项决定
+  // 使用 withSolver() helper 访问，避免到处写 std::visit
+  std::optional<std::variant<modules::DynamicsSolverFixed,
+                             modules::DynamicsSolverFloating>> m_solver_var;
+
   std::unique_ptr<modules::TrajectoryPlanner>
-      m_planner; // 延迟构造，依赖 m_solver
+      m_planner; // 延迟构造，依赖 m_solver_var
   modules::YandyArmFSM m_fsm;
   modules::InputProvider m_input;
   modules::HikDriver m_hik_driver;
@@ -128,6 +140,18 @@ private:
       -Eigen::Vector3d::UnitX()};               // 锁定的提取方向 (= 锁定位姿 -R.col(0) = 瓶口反方向)
   double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
   double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
+
+  // ---- withSolver helper (避免到处写 std::visit) ────────────────────────
+  // 用法: withSolver([&](auto& s) { return s.someMethod(...); })
+  // 注: m_solver_var 是 optional，构造完成后始终有值，* 解引用安全
+  template<typename F>
+  decltype(auto) withSolver(F&& f) {
+      return std::visit(std::forward<F>(f), *m_solver_var);
+  }
+  template<typename F>
+  decltype(auto) withSolver(F&& f) const {
+      return std::visit(std::forward<F>(f), *m_solver_var);
+  }
 
   // ---- 私有方法 ----
   void visionLoop();

@@ -12,9 +12,33 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
   m_logger = core::create_logger("YandyRobot", spdlog::level::info);
   m_logger->info("try loading config from {}", YANDY_ROBOT_CONFIG);
 
-  // 构造 TrajectoryPlanner (需要 m_solver 的 model)
+  // ── 从 solver.toml 决定实例化固定基座还是浮动基座的 DynamicsSolver ──────
+  {
+    bool use_floating = false;
+    try {
+      auto stbl    = toml::parse_file(YANDY_CONFIG_PATH "solver.toml");
+      use_floating = stbl["floating_base"].value<bool>().value_or(false);
+    } catch (...) {
+      m_logger->warn("Cannot read solver.toml for floating_base, defaulting to fixed-base.");
+    }
+
+    // optional<variant> 的正确 emplace 写法:
+    // optional::emplace(args...) 将 args... 转发给 variant 的构造函数，
+    // 而 variant(in_place_type<T>) 构造 T 候选值 (default-construct T).
+    if (use_floating) {
+      m_logger->info("Instantiating DynamicsSolver<true> (floating-base).");
+      m_solver_var.emplace(std::in_place_type<modules::DynamicsSolverFloating>);
+    } else {
+      m_logger->info("Instantiating DynamicsSolver<false> (fixed-base).");
+      m_solver_var.emplace(std::in_place_type<modules::DynamicsSolverFixed>);
+    }
+  }
+
+  // 构造 TrajectoryPlanner (需要 m_solver_var 中 model 的引用)
   m_planner = std::make_unique<modules::TrajectoryPlanner>(
-      DT, m_solver.getModel(), m_solver.getGeometryModel());
+      DT,
+      withSolver([](auto& s) -> pinocchio::Model& { return s.getModel(); }),
+      withSolver([](auto& s) -> const pinocchio::GeometryModel& { return s.getGeometryModel(); }));
 
   // 注册 FSM 回调: 一次性硬件动作由 action 直接驱动
   modules::detail::FSMCallbacks cb;
@@ -190,10 +214,15 @@ void yandy::Robot::start() {
 
   // 读取初始关节状态，预填充 cmd 防止首帧飞车
   m_arm_hw.read(m_arm_state);
-  m_solver.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q);
+  withSolver([&](auto& s) { s.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q); });
   m_arm_cmd.q_des = m_arm_state.q;
   m_arm_cmd.v_des.setZero();
-  m_arm_cmd.tau_ff = m_solver.computeGravity();
+  // 初始时底盘静止 (ax=0,ay=0,az=+9.81 表示水平), 等价于 computeGravity()
+  m_arm_cmd.tau_ff = withSolver([](auto& s) {
+      return s.computeDynamics(Eigen::Vector3d(0.0, 0.0, 9.81),
+                               Eigen::Vector3d::Zero(),
+                               Eigen::Quaterniond::Identity());
+  });
   m_arm_cmd.kp.fill(20.0);
   m_arm_cmd.kd.fill(1.0);
 
@@ -203,7 +232,7 @@ void yandy::Robot::start() {
 
   // 读取当前 store 关节位置
   for (size_t i = 0; i < 2; ++i) {
-    m_store_pose[i] = m_solver.getStoreFrame(i);
+    m_store_pose[i] = withSolver([i](auto& s) { return s.getStoreFrame(i); });
   }
 
   m_logger->info("Entering main control loop at {}Hz.",
@@ -221,7 +250,7 @@ void yandy::Robot::start() {
     updateGimbalFromPack(pack);
 
     // 3. 更新运动学 (传入分离的 arm/gimbal 状态)
-    m_solver.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q);
+    withSolver([&](auto& s) { s.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q); });
     m_planner->updateGimbalState(m_gimbal_state.q);
 
     // 4. 检查 OMPL 是否有新规划结果
@@ -269,10 +298,17 @@ void yandy::Robot::start() {
     case YandyState::Disabled:
     case YandyState::Error:
     default:
-      // 保持当前位置 + 重力补偿
-      m_arm_cmd.q_des = m_arm_state.q;
+      // 保持当前位置 + 动力学补偿 (含底盘惯性, 固定基座时退化为重力补偿)
+      m_arm_cmd.q_des  = m_arm_state.q;
       m_arm_cmd.v_des.setZero();
-      m_arm_cmd.tau_ff = m_solver.computeGravity();
+      {
+        const Eigen::Vector3d  chassis_acc  (pack.ax, pack.ay, pack.az);
+        const Eigen::Vector3d  chassis_omega(pack.gx, pack.gy, pack.gz);
+        const Eigen::Quaterniond chassis_quat(pack.qw, pack.qx, pack.qy, pack.qz);
+        m_arm_cmd.tau_ff = withSolver([&](auto& s) {
+            return s.computeDynamics(chassis_acc, chassis_omega, chassis_quat);
+        });
+      }
       m_arm_hw.write(m_arm_cmd);
       break;
     }
@@ -285,7 +321,7 @@ void yandy::Robot::start() {
       detail::RobotVizData vd;
       // 组装完整 9D 关节状态用于可视化
       vd.q = common::combineJoints(m_arm_state.q, m_gimbal_state.q);
-      vd.ee_pose = m_solver.getEndEffectorPose();
+      vd.ee_pose = withSolver([](auto& s) { return s.getEndEffectorPose(); });
       vd.target_pose = m_target_pose;
       vd.state = cur_state;
 
@@ -297,7 +333,7 @@ void yandy::Robot::start() {
         vd.vision_unit_pose_base =
             (m_is_simulate || m_force_simulate_vision)
                 ? m_sim_cam_pose * vis->unit_pose
-                : m_solver.transformObjectToBase(vis->unit_pose);
+                : withSolver([&](auto& s) { return s.transformObjectToBase(vis->unit_pose); });
       }
 
       m_viz_buf.write(vd);
@@ -316,12 +352,22 @@ void yandy::Robot::stop() {
     return; // 已经停止
   m_running.store(false, std::memory_order_release);
 
+  m_logger->info("Stopping Robot...");
+
+  // 1. 先停止规划线程 (避免继续规划)
   m_planner->stopPlanThread();
 
+  // 2. 停止视觉线程
   if (m_vision_thread.joinable())
     m_vision_thread.join();
 
-  m_arm_hw.disable();
+  // 3. 最后禁用硬件
+  try {
+    m_arm_hw.disable();
+  } catch (const std::exception& e) {
+    m_logger->warn("Exception during motor disable: {}", e.what());
+  }
+
   m_logger->info("Robot stopped.");
 }
 
@@ -433,7 +479,15 @@ void yandy::Robot::simVisionLoop() {
 
 bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
   m_target_pose = target_pose;
-  m_arm_cmd.tau_ff = m_solver.computeGravity();
+
+  // 每帧取最新底盘数据用于动力学补偿
+  const auto& dyn_pack     = m_input.getLatestCommand();
+  const Eigen::Vector3d  chassis_acc  (dyn_pack.ax, dyn_pack.ay, dyn_pack.az);
+  const Eigen::Vector3d  chassis_omega(dyn_pack.gx, dyn_pack.gy, dyn_pack.gz);
+  const Eigen::Quaterniond chassis_quat(dyn_pack.qw, dyn_pack.qx, dyn_pack.qy, dyn_pack.qz);
+  m_arm_cmd.tau_ff = withSolver([&](auto& s) {
+      return s.computeDynamics(chassis_acc, chassis_omega, chassis_quat);
+  });
 
   // 如果 OMPL 正在等待或执行中，让 Ruckig 继续跟踪 waypoints，不重新规划
   if (m_ompl_pending || m_ompl_executing) {
@@ -443,7 +497,7 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
   }
 
   // IK 求解 (只针对机械臂 6 DoF)
-  auto q_sol = m_solver.solveIK(target_pose, m_arm_state.q, 0.01);
+  auto q_sol = withSolver([&](auto& s) { return s.solveIK(target_pose, m_arm_state.q, 0.01); });
   if (!q_sol) {
     // IK 失败，Ruckig 继续执行当前轨迹 (或已停车)
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
@@ -455,7 +509,7 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
 
   // 路径碰撞检测 (使用当前云台状态)
   // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动
-  bool collision = m_solver.checkPathCollision(m_arm_state.q, q_goal);
+  bool collision = withSolver([&](auto& s) { return s.checkPathCollision(m_arm_state.q, q_goal); });
   if (m_ompl_fail_cooldown == 0 && collision) {
     // 路径有碰撞 → 停车 + 唤醒 OMPL
     m_logger->warn("Path collision detected, braking and requesting OMPL plan");
@@ -476,7 +530,7 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
 
 void yandy::Robot::handleManual() {
   // 保险：离开 Store 模式时（不论是正常完成还是手动取消）恢复 base_link 碰撞检测
-  m_solver.setBaseLinkCollisionEnabled(true);
+  withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(true); });
   const auto pack = m_input.getLatestCommand();
 
   // 构造目标位姿 (基座坐标系)
@@ -513,8 +567,14 @@ void yandy::Robot::handleFetching() {
 void yandy::Robot::handleSeeking() {
   auto vd = m_vision_buf.try_read();
   if (!vd.has_value() || !vd->valid) {
-    // 无有效视觉数据，保持当前位置
-    m_arm_cmd.tau_ff = m_solver.computeGravity();
+    // 无有效视觉数据，保持当前位置 + 动力学补偿
+    const auto& seek_pack = m_input.getLatestCommand();
+    m_arm_cmd.tau_ff = withSolver([&](auto& s) {
+        return s.computeDynamics(
+            Eigen::Vector3d(seek_pack.ax, seek_pack.ay, seek_pack.az),
+            Eigen::Vector3d(seek_pack.gx, seek_pack.gy, seek_pack.gz),
+            Eigen::Quaterniond(seek_pack.qw, seek_pack.qx, seek_pack.qy, seek_pack.qz));
+    });
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
     m_arm_hw.write(m_arm_cmd);
     return;
@@ -525,7 +585,7 @@ void yandy::Robot::handleSeeking() {
   if (m_is_simulate || m_force_simulate_vision) {
     target_pose = m_sim_cam_pose * vd->unit_pose;
   } else {
-    target_pose = m_solver.transformObjectToBase(vd->unit_pose);
+    target_pose = withSolver([&](auto& s) { return s.transformObjectToBase(vd->unit_pose); });
   }
 
   // 更新位姿历史
@@ -581,7 +641,7 @@ void yandy::Robot::handlePreGrasp() {
   }
 
   // 检查是否到达预抓取点
-  const Eigen::Vector3d ee_pos = m_solver.getEndEffectorPose().translation();
+  const Eigen::Vector3d ee_pos = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
   const double dist = (ee_pos - pregrasp_pos).norm();
 
   if (dist < 0.01 && m_planner->isFinished()) // 10mm 阈值 + 轨迹完成
@@ -656,7 +716,7 @@ void yandy::Robot::handleWithdrawing() {
   }
 
   // 检查是否完成撤回
-  const Eigen::Vector3d ee_pos = m_solver.getEndEffectorPose().translation();
+  const Eigen::Vector3d ee_pos = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
   if ((ee_pos - pregrasp_pos).norm() < 0.02 && m_planner->isFinished()) {
     m_logger->info("Withdrawal complete, exiting fetch mode");
 
@@ -738,7 +798,16 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   m_target_pose.translate(target_pos);
   m_target_pose.rotate(R_des);
 
-  m_arm_cmd.tau_ff = m_solver.computeGravity();
+  // 动力学补偿 (含底盘惯性)
+  {
+    const auto& p5_pack = m_input.getLatestCommand();
+    m_arm_cmd.tau_ff = withSolver([&](auto& s) {
+        return s.computeDynamics(
+            Eigen::Vector3d(p5_pack.ax, p5_pack.ay, p5_pack.az),
+            Eigen::Vector3d(p5_pack.gx, p5_pack.gy, p5_pack.gz),
+            Eigen::Quaterniond(p5_pack.qw, p5_pack.qx, p5_pack.qy, p5_pack.qz));
+    });
+  }
 
   // 如果 OMPL 正在等待或执行中，让 Ruckig 继续跟踪 waypoints，不重新规划
   if (m_ompl_pending || m_ompl_executing) {
@@ -748,7 +817,7 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   }
 
   // 用 6DoF IK 求解（5DoF 叉积误差在 approach=[1,0,0] 时退化，改用 6DoF）
-  auto q_sol = m_solver.solveIK(m_target_pose, m_arm_state.q, 0.01);
+  auto q_sol = withSolver([&](auto& s) { return s.solveIK(m_target_pose, m_arm_state.q, 0.01); });
   if (!q_sol) {
     static int ik_fail_count = 0;
     if (++ik_fail_count % 100 == 1) {
@@ -767,7 +836,7 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   // 路径碰撞检测
   // 如果在 OMPL 失败冷却期内，跳过碰撞检测直接尝试移动
   if (m_ompl_fail_cooldown == 0 &&
-      m_solver.checkPathCollision(m_arm_state.q, q_goal)) {
+      withSolver([&](auto& s) { return s.checkPathCollision(m_arm_state.q, q_goal); })) {
     m_logger->warn("Path collision detected, requesting OMPL plan");
     m_planner->brake();
     m_planner->requestPlan(m_arm_state.q, q_goal);
@@ -786,7 +855,7 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
 
 void yandy::Robot::handleStore() {
   // 存取矿期间忽略与 base_link（底座柱子）的碰撞
-  m_solver.setBaseLinkCollisionEnabled(false);
+  withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(false); });
 
   const Eigen::Isometry3d &sp = m_store_pose[m_store_pose_index];
 
@@ -801,7 +870,7 @@ void yandy::Robot::handleStore() {
     switch (m_store_phase) {
     case StorePhase::Approaching: {
       if (!solveAndPlan(above_pose)) return;
-      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
       if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached above-store, lowering to store frame");
         m_store_phase = StorePhase::AtTarget;
@@ -810,11 +879,11 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::AtTarget: {
       if (!solveAndPlan(sp)) return;
-      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
       if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached store position, opening claw");
         m_effector.openClaw();
-        m_solver.setBaseLinkCollisionEnabled(true);
+        withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(true); });
         m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
       }
       break;
@@ -826,7 +895,7 @@ void yandy::Robot::handleStore() {
     switch (m_store_phase) {
     case StorePhase::AtTarget: {
       if (!solveAndPlan(sp)) return;
-      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
       if ((ee - sp.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: reached store position, closing claw");
         m_effector.closeClaw();
@@ -836,10 +905,10 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::Retracting: {
       if (!solveAndPlan(above_pose)) return;
-      const Eigen::Vector3d ee = m_solver.getEndEffectorPose().translation();
+      const Eigen::Vector3d ee = withSolver([](auto& s) { return s.getEndEffectorPose().translation(); });
       if ((ee - above_pose.translation()).norm() < 0.015 && m_planner->isFinished()) {
         m_logger->info("Store: lifted store item, exiting store mode");
-        m_solver.setBaseLinkCollisionEnabled(true);
+        withSolver([](auto& s) { s.setBaseLinkCollisionEnabled(true); });
         m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
       }
       break;

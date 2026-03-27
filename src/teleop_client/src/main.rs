@@ -200,6 +200,15 @@ fn main() {
     const GIMBAL_Z_SPEED: f32 = 0.1;     // m/s
     const GIMBAL_ROT_SPEED: f32 = 0.5;   // rad/s
 
+    // 底盘运动控制状态 (模拟发送给上位机的底盘传感器数据)
+    // 箭头键控制加速度, ","/"." 控制偏航角速度
+    let mut chassis_ax: f32 = 0.0;   // 底盘前后加速度 (m/s²), ↑/↓
+    let mut chassis_ay: f32 = 0.0;   // 底盘左右加速度 (m/s²), ←/→
+    let mut chassis_gz: f32 = 0.0;   // 底盘偏航角速度 (rad/s), ,/.
+    const CHASSIS_ACCEL: f32 = 2.0;      // 底盘加速度幅值 (m/s²)
+    const CHASSIS_YAW_RATE: f32 = 1.0;   // 底盘偏航角速度幅值 (rad/s)
+    const CHASSIS_DECAY: f32 = 8.0;      // 键松开后归零的衰减系数 (1/s)
+
     let mut current_pos = desired_pos;
     let mut current_roll = desired_roll;
     let mut current_pitch = desired_pitch;
@@ -374,6 +383,40 @@ fn main() {
             gimbal_pitch = (gimbal_pitch + GIMBAL_ROT_SPEED * dt).min(GIMBAL_PITCH_MAX);
         }
 
+        // 底盘运动控制 (箭头键 + ,/. 键)
+        // ↑/↓ → chassis_ax (前/后), ←/→ → chassis_ay (左/右), ,/. → chassis_gz (左旋/右旋)
+        let ax_input = (window.get_key(Key::Up)    == Action::Press) as i32
+                     - (window.get_key(Key::Down)  == Action::Press) as i32;
+        let ay_input = (window.get_key(Key::Left)  == Action::Press) as i32
+                     - (window.get_key(Key::Right) == Action::Press) as i32;
+        let gz_input = (window.get_key(Key::Comma)  == Action::Press) as i32
+                     - (window.get_key(Key::Period) == Action::Press) as i32;
+
+        if ax_input != 0 {
+            chassis_ax = ax_input as f32 * CHASSIS_ACCEL;
+        } else {
+            // 键松开后按衰减系数归零
+            let decay = (CHASSIS_DECAY * dt).min(1.0);
+            chassis_ax *= 1.0 - decay;
+            if chassis_ax.abs() < 0.01 { chassis_ax = 0.0; }
+        }
+
+        if ay_input != 0 {
+            chassis_ay = ay_input as f32 * CHASSIS_ACCEL;
+        } else {
+            let decay = (CHASSIS_DECAY * dt).min(1.0);
+            chassis_ay *= 1.0 - decay;
+            if chassis_ay.abs() < 0.01 { chassis_ay = 0.0; }
+        }
+
+        if gz_input != 0 {
+            chassis_gz = gz_input as f32 * CHASSIS_YAW_RATE;
+        } else {
+            let decay = (CHASSIS_DECAY * dt).min(1.0);
+            chassis_gz *= 1.0 - decay;
+            if chassis_gz.abs() < 0.01 { chassis_gz = 0.0; }
+        }
+
         // Damping
         let alpha = (damping * dt).min(1.0);
         current_pos.coords = current_pos.coords.lerp(&desired_pos.coords, alpha);
@@ -440,8 +483,28 @@ fn main() {
             &kiss3d::text::Font::default(),
             &na::Point3::new(0.5, 0.5, 0.5),
         );
+        window.draw_text(
+            &format!(
+                "Chassis: ax={:.2} ay={:.2} gz={:.2} m/s²·rad/s",
+                chassis_ax, chassis_ay, chassis_gz
+            ),
+            &na::Point2::new(10.0, 250.0),
+            30.0,
+            &kiss3d::text::Font::default(),
+            &na::Point3::new(1.0, 0.7, 0.3),
+        );
+        window.draw_text(
+            "[↑/↓] ax  [←/→] ay  [,/.] gz",
+            &na::Point2::new(10.0, 285.0),
+            28.0,
+            &kiss3d::text::Font::default(),
+            &na::Point3::new(0.5, 0.5, 0.5),
+        );
 
         // UDP Send
+        // 注: ax/ay/gz 为 teleop 模拟的底盘运动指令 (非真实 IMU 数据)
+        //     上位机在 floating_base=true 时将其用于惯性补偿
+        //     az 模拟静止时 IMU Z 轴比力 (+g); gx/gy 及四元数置为静止值
         let packet = YandyControlPack {
             x: current_pos.x,
             y: current_pos.y,
@@ -453,6 +516,18 @@ fn main() {
             gimbal_yaw,
             gimbal_pitch,
             cmd: cmd_state.to_u8(),
+            // 底盘传感器模拟: ax/ay 由箭头键控制, az=+9.81 (静止水平 IMU Z 比力)
+            ax: chassis_ax,
+            ay: chassis_ay,
+            az: 9.81,    // IMU Z 比力: 静止水平时 ≈ +g
+            gx: 0.0,
+            gy: 0.0,
+            gz: chassis_gz,
+            // 姿态四元数: teleop 模式下底盘视为水平 (identity)
+            qw: 1.0,
+            qx: 0.0,
+            qy: 0.0,
+            qz: 0.0,
         };
 
         let bytes = serializer.serialize(&packet);
