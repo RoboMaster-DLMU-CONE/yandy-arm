@@ -8,6 +8,7 @@
 #include <random>
 #include <thread>
 #include <variant>
+#include <chrono>
 
 #include <yandy/common/NBuf.hpp>
 #include <yandy/modules/ArmHW.hpp>
@@ -117,9 +118,39 @@ private:
   int m_store_pose_index{0};    // 当前存取矿位姿索引 (由 FSM 回调设置)
 
   // ---- 存取矿流程状态 ----
-  enum class StorePhase { Approaching, AtTarget, Retracting };
+  enum class StorePhase {
+    Approaching,   // move to above_pose
+    PauseAbove,     // dwell above before lowering
+    AtTarget,       // lowered to store_frame
+    OpenWait,       // waiting after opening claw
+    PostOpenLift,   // lift slightly above store_frame
+    Retreating,     // retreat along end-effector Z (negative direction)
+    Retracting      // used by retrieve flow (lift to above_pose)
+  };
   StorePhase m_store_phase{StorePhase::Approaching};
+
+  // Store behavior parameters (configurable via [store] in robot.toml)
   double m_store_approach_offset{0.3}; // store_frame Z 轴上偏移 (m)
+  double m_store_pause_after_above_s{0.5}; // dwell time above before lowering (default)
+  double m_store_wait_before_open_s{0.05};  // wait before opening claw (new, default)
+  double m_store_wait_after_open_s{0.3};    // wait after opening claw (default)
+  // wait after closing claw (during retrieve) before retracting (non-blocking)
+  double m_store_wait_after_close_s{0.05};
+  double m_store_extra_z_above_store_m{0.04}; // lift amount above store_frame after open
+  double m_store_retreat_distance_m{0.10};    // retreat distance along -EE_Z (default)
+  // retreat target offsets relative to store_frame X/Y (meters). Use these to compute
+  // post-open retreat target as: lift_pose + X*offset_x + Y*offset_y
+  double m_store_retreat_offset_x_m{0.02};
+  double m_store_retreat_offset_y_m{0.00};
+
+  // ---- 新增: retrieve（取矿）自定义参数 ----
+  // 在 retrieve 阶段，抵达 store_frame 后的额外偏移（相对 base_link 的 z 偏移）
+  double m_retrieve_z_offset_m{0.02};
+  // 在 retrieve 阶段，允许绕末端 Z 轴的偏航调整（弧度）以改善 IK
+  double m_retrieve_yaw_offset_rad{0.0};
+
+  // Phase timing
+  std::chrono::steady_clock::time_point m_store_phase_start{std::chrono::steady_clock::now()};
 
   // ---- 抓取流程状态 ----
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
