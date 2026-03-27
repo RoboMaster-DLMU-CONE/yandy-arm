@@ -17,7 +17,7 @@ mit_pid = { kp = 5.0, kd = 0.5 }
 mit_feedforward_torque = 0.4
 
 # 夹持力矩 (N·m) - 保持抓取时的力矩
-holding_torque = 1.0
+holding_torque = 1.1
 
 # 回零参数
 zeroing_torque = 1.2              # 回零时的恒定力矩 (N·m)
@@ -25,7 +25,7 @@ zeroing_velocity_threshold = 0.01 # 静止检测速度阈值 (rad/s)
 zeroing_stall_time_ms = 150       # 静止持续时间阈值 (ms)
 
 # 限位参数
-open_position = 0.9 # 张开位置 (rad)
+open_position = 1.0 # 张开位置 (rad)
 
 # 碰撞检测参数
 collision_current_threshold = 5000.0 # 电流阈值 (mA)
