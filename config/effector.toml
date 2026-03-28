@@ -2,7 +2,7 @@
 
 # 仿真模式
 # simulate: true = 使用仿真夹爪（FakeEffector），false = 使用真实 CAN 夹爪（RealEffector）
-simulate = false
+simulate = true
 
 # DJI M2006 电机 ID
 id = 8
@@ -28,7 +28,9 @@ zeroing_stall_time_ms = 150       # 静止持续时间阈值 (ms)
 open_position = 1.0 # 张开位置 (rad)
 
 # 碰撞检测参数
-collision_current_threshold = 5000.0 # 电流阈值 (mA)
+# 电流阈值 (mA)：超过此值认为碰到物体
+# 建议值：2000-4000mA (根据实际夹爪力度调整)
+collision_current_threshold = 3000.0
 
 # 仿真参数
 sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)

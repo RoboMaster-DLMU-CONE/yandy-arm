@@ -65,7 +65,7 @@ public:
     m_logger->info("张开夹爪");
     m_state = State::Opening;
     m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(m_mitFeedforwardTorque);
+    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque);
   }
 
   void closeClaw() override {
@@ -75,7 +75,7 @@ public:
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
     m_motor.setPosRef(m_offset);
-    m_motor.setTorRef(m_mitFeedforwardTorque);
+    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque);
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
   }
@@ -101,17 +101,32 @@ public:
       if (m_firstUpdateInClosing) {
         m_prevCurrent = currentMA;
         m_firstUpdateInClosing = false;
+        m_closingStartTicks = 0;
         break;
       }
 
-      // 碰撞检测：电流超过阈值
-      bool collision = std::abs(currentMA) > m_collisionCurrentThreshold;
+      m_closingStartTicks++;
 
-      if (collision) {
-        m_logger->info(
-            "检测到物体，切换到保持模式 (pos={:.3f}, current={:.1f}mA)",
-            currentPos, currentMA);
-        enterHolding(currentPos);
+      // 正常闭合到达目标判断
+      float posError = std::abs(m_offset - currentPos);
+      if (posError < 0.05f) {
+        m_state = State::Idle;
+        m_logger->info("夹爪已完全闭合 (未检测到物体)");
+        break;
+      }
+
+      // 启动防抖：前 25 帧（约 100ms，假设 250Hz）不进行碰撞检测
+      if (m_closingStartTicks > 25) {
+        // 碰撞检测：电流超过阈值 且 速度极小
+        bool collision = std::abs(currentMA) > m_collisionCurrentThreshold && 
+                         std::abs(status.reduced_angular_rad_s) < m_zeroingVelocityThreshold * 2.0f;
+
+        if (collision) {
+          m_logger->info(
+              "检测到物体，切换到保持模式 (pos={:.3f}, current={:.1f}mA)",
+              currentPos, currentMA);
+          enterHolding(currentPos);
+        }
       }
 
       m_prevCurrent = currentMA;
@@ -161,7 +176,7 @@ private:
 
     // 往闭合方向施加力矩直到堵转（考虑 dir 方向）
     m_motor.setPosRef(m_dir * 10.0f);
-    m_motor.setTorRef(m_zeroingTorque);
+    m_motor.setTorRef(m_dir * m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
       auto status = m_motor.getStatusPlain();
@@ -190,7 +205,7 @@ private:
   void enterHolding(float holdPosition) {
     m_state = State::Holding;
     m_motor.setPosRef(holdPosition);
-    m_motor.setTorRef(m_holdingTorque);
+    m_motor.setTorRef(m_dir * m_holdingTorque);
     m_logger->info("进入保持模式，保持位置 = {:.4f} rad", holdPosition);
   }
 
@@ -210,6 +225,7 @@ private:
 
   float m_prevCurrent = 0.0f;
   bool m_firstUpdateInClosing = true;
+  int m_closingStartTicks = 0;
 
   float m_zeroingTorque = 0.18f;
   float m_zeroingVelocityThreshold = 0.05f;
