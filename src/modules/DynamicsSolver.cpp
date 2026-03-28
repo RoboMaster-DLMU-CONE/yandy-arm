@@ -776,6 +776,45 @@ void DynamicsSolver<kFloating>::setBaseLinkCollisionEnabled(bool enabled)
 }
 
 // ============================================================================
+//  末端负载设置
+// ============================================================================
+
+template<bool kFloating>
+void DynamicsSolver<kFloating>::setEndEffectorMass(double mass)
+{
+    // 获取 link_6 的索引 (gripper_tcp 所在线性)
+    // 使用 frame 来获取 link_6 的父关节
+    const std::string link6_name = "link_6";
+    
+    if (!m_model.existFrame(link6_name)) {
+        m_logger->warn("link_6 frame not found, cannot set end-effector mass");
+        return;
+    }
+    
+    const auto link6_frame_id = m_model.getFrameId(link6_name);
+    const auto& frame = m_model.frames[link6_frame_id];
+    const auto link6_joint_id = frame.parentJoint;
+    
+    // 获取 link_6 的惯性参数
+    auto& link6_inertia = m_model.inertias[link6_joint_id];
+    
+    // 保存原始质量 (首次调用时记录)
+    static const double original_mass = link6_inertia.mass();
+    
+    // 设置新质量 = 原始质量 + 负载质量
+    const double new_mass = original_mass + mass;
+    
+    // 更新质量
+    link6_inertia.mass() = new_mass;
+    
+    // 注意：这里简化处理，假设负载质心与 link_6 质心重合
+    // 如果需要更精确的模型，应该额外考虑负载的质心位置和惯性张量
+    
+    m_logger->info("End-effector mass set to {:.3f} kg (original: {:.3f}, load: {:.3f})",
+                   new_mass, original_mass, mass);
+}
+
+// ============================================================================
 //  随机关节角生成
 // ============================================================================
 

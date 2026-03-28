@@ -160,6 +160,11 @@ private:
   enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
 
+  // ---- 末端负载状态 ----
+  bool m_payload_attached{false};         // 是否有负载 (夹爪夹持物体)
+  static constexpr double PAYLOAD_MASS = 0.6; // 负载质量 (kg) - 600g
+  void updatePayloadMass();               // 根据夹爪状态更新动力学模型中的负载质量
+
   // 在退出 Fetching 模式后忽略下一次 manual 目标下发，避免回到视觉初始点
   bool m_ignore_next_manual{false};
   // 在退出 Fetching 模式后限制返回 Manual 时末端 roll 变化（只在首次 Manual 有效）

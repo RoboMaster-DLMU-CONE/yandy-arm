@@ -349,6 +349,9 @@ void yandy::Robot::start() {
     // 7. 获取当前状态 (用于连续行为派发)
     const auto cur_state = m_fsm.getState();
 
+    // 7.5. 更新末端负载质量 (根据夹爪状态)
+    updatePayloadMass();
+
     // 8. 按状态派发 (设置目标给 planner)
     switch (cur_state) {
     case YandyState::Manual:
@@ -798,7 +801,7 @@ void yandy::Robot::handleApproaching() {
     m_logger->info("Reached grasp target, closing claw");
     m_effector.closeClaw();
 
-    // 设置 FSM 手持状态标志
+    // 设置 FSM 手持状态标志 (用于存矿流程判断)
     m_fsm.setMineralAttached(true);
 
     m_current_extract_offset = 0.0;
@@ -875,6 +878,28 @@ void yandy::Robot::resetFetchState() {
       Eigen::Vector3d::UnitX(); // +X 轴 = 从机器人往目标逼近
   m_locked_extract_dir = -Eigen::Vector3d::UnitZ(); // -Z 轴 = 默认向下
   m_locked_target_valid = false;                    // 清除锁定标志
+}
+
+void yandy::Robot::updatePayloadMass() {
+  // 根据夹爪实际状态 (isHolding) 来决定是否附加负载
+  const bool is_holding = m_effector.isHolding();
+  
+  // 只在状态变化时更新，避免重复调用
+  if (is_holding && !m_payload_attached) {
+    // 夹爪夹持物体，附加 600g 负载
+    withSolver([&](auto &s) {
+      s.setEndEffectorMass(PAYLOAD_MASS);
+    });
+    m_payload_attached = true;
+    m_logger->info("Payload attached: +{:.1f}g (claw holding)", PAYLOAD_MASS * 1000);
+  } else if (!is_holding && m_payload_attached) {
+    // 夹爪张开，移除负载
+    withSolver([&](auto &s) {
+      s.setEndEffectorMass(0.0);
+    });
+    m_payload_attached = false;
+    m_logger->info("Payload removed: 0g (claw open)");
+  }
 }
 
 bool yandy::Robot::isPoseStable() const {
