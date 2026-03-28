@@ -79,7 +79,7 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
     m_store_pose_index = idx;
     // 存矿(有矿): 先到上方再下降; 取矿(无矿): 直接到 store 位置
     m_store_phase = m_fsm.hasMineralAttached() ? StorePhase::Approaching
-                                               : StorePhase::AtTarget;
+                                               : StorePhase::PreFetch;
   };
   cb.on_enter_fetch = [this] { resetFetchState(); };
   m_fsm.setCallbacks(cb);
@@ -1207,6 +1207,69 @@ void yandy::Robot::handleStore() {
   } else {
     // 取矿: AtTarget（store位置）→ 闭爪 → Retracting（上方）→ 退出
     switch (m_store_phase) {
+    case StorePhase::PreFetch: {
+      // 计算相对于 store_frame 的 XY 偏移目标（使用 store_frame.z + 可选 retrieve_z_offset）
+      Eigen::Isometry3d base_target = sp;
+      base_target.translation().z() += m_retrieve_z_offset_m; // 用户指定相对 base_link 的 z 偏移
+
+      // Interpret retreat offsets in base_link frame: add along base_link X/Y
+      Eigen::Vector3d target_pos = base_target.translation()
+          + Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
+          + Eigen::Vector3d::UnitY() * m_store_retreat_offset_y_m;
+
+      // 自动根据 store_frame 的 y 值决定镜像：
+      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw
+      const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
+      const Eigen::Vector3d applied_offsets = Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
+          + Eigen::Vector3d::UnitY() * (sign_y * m_store_retreat_offset_y_m);
+      const double applied_yaw = sign_y * m_retrieve_yaw_offset_rad;
+      target_pos = base_target.translation() + applied_offsets;
+
+      m_logger->info("Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, y={:.3f}, z={:.3f}] (base_link offsets x={:.3f}, y={:.3f}, z_lift={:.3f}, applied_yaw={:.3f})",
+                     target_pos.x(), target_pos.y(), target_pos.z(), m_store_retreat_offset_x_m, sign_y * m_store_retreat_offset_y_m, m_retrieve_z_offset_m, applied_yaw);
+
+      // 构造朝向：使用 store_frame 的旋转作为参考，再应用额外的绕局部 X 轴的偏航
+      // (apply rotation around the store_frame's local X axis)
+      const double yaw = applied_yaw;
+      Eigen::AngleAxisd x_local(yaw, Eigen::Vector3d::UnitX());
+      Eigen::Matrix3d R_des = sp.rotation() * x_local.toRotationMatrix();
+
+      m_target_pose = Eigen::Isometry3d::Identity();
+      m_target_pose.translate(target_pos);
+      m_target_pose.rotate(R_des);
+
+      // 使用 6DoF IK 优先尝试，若失败再尝试 5DoF
+      if (!solveAndPlan(m_target_pose)) {
+        // 作为回退，尝试 5DoF 约束朝向为 -store_frame.Z
+        const Eigen::Vector3d approach_dir = -sp.rotation().col(2).normalized();
+        if (!solveAndPlan5DoF(target_pos, approach_dir, true))
+          return;
+      }
+
+      const Eigen::Vector3d cur = withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
+      if ((cur - target_pos).norm() < 0.03 && m_planner->isFinished()) {
+        m_logger->info("Store (retrieve PreFetch): pre-fetch position reached, starting dwell before lowering");
+        m_store_phase = StorePhase::PausePreFetch;
+        m_store_phase_start = std::chrono::steady_clock::now();
+      }
+      break;
+    }
+    case StorePhase::PausePreFetch: {
+      // 保持 PreFetch 位姿，等待一段时间
+      if (!solveAndPlan(m_target_pose))
+        return;
+      const auto elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        m_store_phase_start)
+              .count();
+      if (elapsed >= m_store_pause_pre_fetch_s) {
+        m_logger->info(
+            "Store (retrieve PreFetch): dwell complete ({:.3f}s), moving to store frame",
+            elapsed);
+        m_store_phase = StorePhase::AtTarget;
+      }
+      break;
+    }
     case StorePhase::AtTarget: {
       m_logger->info(
           "Store (retrieve): moving to store_frame [{:.3f}, {:.3f}, {:.3f}]",

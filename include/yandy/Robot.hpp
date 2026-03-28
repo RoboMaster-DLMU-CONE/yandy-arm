@@ -125,6 +125,8 @@ private:
     OpenWait,       // waiting after opening claw
     PostOpenLift,   // lift slightly above store_frame
     Retreating,     // retreat along end-effector Z (negative direction)
+    PreFetch,       // move to pre-fetch position before retrieving
+    PausePreFetch,  // dwell at pre-fetch position before lowering
     Retracting      // used by retrieve flow (lift to above_pose)
   };
   StorePhase m_store_phase{StorePhase::Approaching};
@@ -148,6 +150,8 @@ private:
   double m_retrieve_z_offset_m{0.02};
   // 在 retrieve 阶段，允许绕末端 Z 轴的偏航调整（弧度）以改善 IK
   double m_retrieve_yaw_offset_rad{0.0};
+  // PreFetch 位置停留时间（在下降到 store_frame 之前）
+  double m_store_pause_pre_fetch_s{0.1};
 
   // Phase timing
   std::chrono::steady_clock::time_point m_store_phase_start{std::chrono::steady_clock::now()};
