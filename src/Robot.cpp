@@ -323,6 +323,9 @@ void yandy::Robot::start() {
     const auto pack = m_input.getLatestCommand();
     updateGimbalFromPack(pack);
 
+    // 2.5. 更新夹爪状态机 (必须在 updatePayloadMass 之前调用)
+    m_effector.update();
+
     // 3. 更新运动学 (传入分离的 arm/gimbal 状态)
     withSolver([&](auto &s) {
       s.updateKinematics(m_arm_state.q, m_arm_state.v, m_gimbal_state.q);
@@ -584,6 +587,7 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
       [&](auto &s) { return s.solveIK(target_pose, m_arm_state.q, 0.01); });
   if (!q_sol) {
     // IK 失败，Ruckig 继续执行当前轨迹 (或已停车)
+    m_logger->warn("[Manual] IK failed for target");
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
     m_arm_hw.write(m_arm_cmd);
     return false;
@@ -596,6 +600,16 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
     const double delta = m_arm_state.q[i] - q_goal[i];
     const double n = std::round(delta / (2.0 * M_PI));
     q_goal[i] += 2.0 * M_PI * n;
+  }
+
+  // 调试日志：打印 IK 解
+  {
+    auto ee_pose = withSolver([](auto& s) { return s.getEndEffectorPose(); });
+    Eigen::Vector3d rpy_ee = ee_pose.rotation().eulerAngles(2, 1, 0);
+    m_logger->debug("[Manual] IK sol: j1={:.2f} j2={:.2f} j3={:.2f} j4={:.2f} j5={:.2f} j6={:.2f}, EE RPY (deg): {:.1f} {:.1f} {:.1f}",
+                    q_goal[0] * 180 / M_PI, q_goal[1] * 180 / M_PI, q_goal[2] * 180 / M_PI,
+                    q_goal[3] * 180 / M_PI, q_goal[4] * 180 / M_PI, q_goal[5] * 180 / M_PI,
+                    rpy_ee[0] * 180 / M_PI, rpy_ee[1] * 180 / M_PI, rpy_ee[2] * 180 / M_PI);
   }
 
   // 路径碰撞检测 (使用当前云台状态)
@@ -650,11 +664,25 @@ void yandy::Robot::handleManual() {
   }
 
   // 构造目标位姿 (基座坐标系)
+  // 使用 ZYX Euler 角顺序：先 yaw (绕世界 Z 轴), 再 pitch (绕新 Y 轴), 最后 roll (绕新 X 轴)
+  // 注意：使用 linear() 直接赋值而不是 rotate() 右乘，避免坐标系混淆
   Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
-  target.pretranslate(Eigen::Vector3d(pack.x, pack.y, pack.z));
-  target.rotate(Eigen::AngleAxisd(pack.yaw, Eigen::Vector3d::UnitZ()) *
-                Eigen::AngleAxisd(pack.pitch, Eigen::Vector3d::UnitY()) *
-                Eigen::AngleAxisd(pack.roll, Eigen::Vector3d::UnitX()));
+  target.translation() << pack.x, pack.y, pack.z;
+
+  // 构造旋转矩阵：R = Rz(yaw) * Ry(pitch) * Rx(roll)
+  // 这是标准的 ZYX 外禀旋转顺序，对应 Eigen::eulerAngles(2,1,0) 的逆运算
+  Eigen::Matrix3d R = (Eigen::AngleAxisd(pack.yaw, Eigen::Vector3d::UnitZ()) *
+                       Eigen::AngleAxisd(pack.pitch, Eigen::Vector3d::UnitY()) *
+                       Eigen::AngleAxisd(pack.roll, Eigen::Vector3d::UnitX())).toRotationMatrix();
+  target.linear() = R;
+
+  // 调试日志：打印目标位姿的 RPY 值
+  Eigen::Vector3d rpy_target = target.rotation().eulerAngles(2, 1, 0);
+  float x = pack.x, y = pack.y, z = pack.z;
+  float roll = pack.roll, pitch = pack.pitch, yaw = pack.yaw;
+  m_logger->debug("[Manual] Input XYZ: {:.3f} {:.3f} {:.3f}, RPY (deg): {:.1f} {:.1f} {:.1f}",
+                  x, y, z,
+                  rpy_target[0] * 180 / M_PI, rpy_target[1] * 180 / M_PI, rpy_target[2] * 180 / M_PI);
 
   solveAndPlan(target);
 }
