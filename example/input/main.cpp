@@ -12,8 +12,8 @@ int main() {
   yandy::modules::InputProvider provider;
   const auto printPack = [logger](const YandyControlPack &pack) {
     logger->info(
-        "Received: x={}, y={}, z={}, roll={}, pitch={}, yaw={}, cmd={}", pack.x,
-        pack.y, pack.z, pack.roll, pack.pitch, pack.yaw, pack.cmd);
+        "Received: x={}, y={}, z={}, ee_qw={}, ee_qx={}, ee_qy={}, ee_qz={}, cmd={}", pack.x,
+        pack.y, pack.z, pack.ee_qw, pack.ee_qx, pack.ee_qy, pack.ee_qz, pack.cmd);
     logger->info("  gimbal: z={}, yaw={}, pitch={}", pack.gimbal_z,
                  pack.gimbal_yaw, pack.gimbal_pitch);
     logger->info("  IMU acc: ax={}, ay={}, az={}", pack.ax, pack.ay, pack.az);

@@ -663,28 +663,35 @@ void yandy::Robot::handleManual() {
     Eigen::Vector3d rpy_curr =
         R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
     const double roll_keep = rpy_curr[2];
-    pack.roll = static_cast<float>(roll_keep);
+    
+    // 从四元数中提取 RPY，替换 roll 后重新构造四元数
+    Eigen::Quaterniond q_in(pack.ee_qw, pack.ee_qx, pack.ee_qy, pack.ee_qz);
+    Eigen::Vector3d rpy_in = q_in.toRotationMatrix().eulerAngles(2, 1, 0);
+    
+    Eigen::Quaterniond q_new = Eigen::AngleAxisd(rpy_in[0], Eigen::Vector3d::UnitZ()) *
+                               Eigen::AngleAxisd(rpy_in[1], Eigen::Vector3d::UnitY()) *
+                               Eigen::AngleAxisd(roll_keep, Eigen::Vector3d::UnitX());
+    pack.ee_qw = static_cast<float>(q_new.w());
+    pack.ee_qx = static_cast<float>(q_new.x());
+    pack.ee_qy = static_cast<float>(q_new.y());
+    pack.ee_qz = static_cast<float>(q_new.z());
+    
     // 仅在首次手动目标中应用限制
     m_limit_return_roll = false;
   }
 
   // 构造目标位姿 (基座坐标系)
-  // 使用 ZYX Euler 角顺序：先 yaw (绕世界 Z 轴), 再 pitch (绕新 Y 轴), 最后 roll (绕新 X 轴)
-  // 注意：使用 linear() 直接赋值而不是 rotate() 右乘，避免坐标系混淆
   Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
   target.translation() << pack.x, pack.y, pack.z;
 
-  // 构造旋转矩阵：R = Rz(yaw) * Ry(pitch) * Rx(roll)
-  // 这是标准的 ZYX 外禀旋转顺序，对应 Eigen::eulerAngles(2,1,0) 的逆运算
-  Eigen::Matrix3d R = (Eigen::AngleAxisd(pack.yaw, Eigen::Vector3d::UnitZ()) *
-                       Eigen::AngleAxisd(pack.pitch, Eigen::Vector3d::UnitY()) *
-                       Eigen::AngleAxisd(pack.roll, Eigen::Vector3d::UnitX())).toRotationMatrix();
-  target.linear() = R;
+  // 从四元数直接构造旋转矩阵
+  Eigen::Quaterniond q_target(pack.ee_qw, pack.ee_qx, pack.ee_qy, pack.ee_qz);
+  q_target.normalize();
+  target.linear() = q_target.toRotationMatrix();
 
   // 调试日志：打印目标位姿的 RPY 值
   Eigen::Vector3d rpy_target = target.rotation().eulerAngles(2, 1, 0);
   float x = pack.x, y = pack.y, z = pack.z;
-  float roll = pack.roll, pitch = pack.pitch, yaw = pack.yaw;
   m_logger->debug("[Manual] Input XYZ: {:.3f} {:.3f} {:.3f}, RPY (deg): {:.1f} {:.1f} {:.1f}",
                   x, y, z,
                   rpy_target[0] * 180 / M_PI, rpy_target[1] * 180 / M_PI, rpy_target[2] * 180 / M_PI);

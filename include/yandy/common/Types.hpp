@@ -96,9 +96,10 @@ struct __attribute__((packed)) YandyControlPack {
   float x;     // m
   float y;     // m
   float z;     // m
-  float roll;  // rad
-  float pitch; // rad
-  float yaw;   // rad
+  float ee_qw; // 末端姿态四元数 W
+  float ee_qx; // 末端姿态四元数 X
+  float ee_qy; // 末端姿态四元数 Y
+  float ee_qz; // 末端姿态四元数 Z
   float gimbal_z;
   float gimbal_yaw;
   float gimbal_pitch;
@@ -123,7 +124,7 @@ struct __attribute__((packed)) YandyControlPack {
 
   YandyControlCmd cmd;
 };
-static_assert(sizeof(YandyControlPack) == 77,
+static_assert(sizeof(YandyControlPack) == 81,
               "YandyControlPack size mismatch — update Rust packet.rs and "
               "lower computer firmware");
 

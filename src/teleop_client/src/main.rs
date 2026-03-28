@@ -11,14 +11,16 @@ use robot_view::RobotView;
 use std::net::UdpSocket;
 use std::time::Instant;
 
-fn load_stl_mesh(path: &std::path::Path) -> Option<std::rc::Rc<std::cell::RefCell<kiss3d::resource::Mesh>>> {
+fn load_stl_mesh(
+    path: &std::path::Path,
+) -> Option<std::rc::Rc<std::cell::RefCell<kiss3d::resource::Mesh>>> {
     use std::fs::File;
     let mut file = File::open(path).ok()?;
     let stl = stl_io::read_stl(&mut file).ok()?;
-    
+
     let mut coords = Vec::new();
     let mut indices = Vec::new();
-    
+
     for (i, face) in stl.faces.iter().enumerate() {
         for &v_idx in &face.vertices {
             let v = stl.vertices[v_idx];
@@ -27,9 +29,9 @@ fn load_stl_mesh(path: &std::path::Path) -> Option<std::rc::Rc<std::cell::RefCel
         let base = i as u16 * 3;
         indices.push(na::Point3::new(base, base + 1, base + 2));
     }
-    
+
     Some(std::rc::Rc::new(std::cell::RefCell::new(
-        kiss3d::resource::Mesh::new(coords, indices, None, None, false)
+        kiss3d::resource::Mesh::new(coords, indices, None, None, false),
     )))
 }
 
@@ -126,43 +128,43 @@ fn main() {
     let mut global_axis_x = global_axes.add_cube(1.0, 0.05, 0.05);
     global_axis_x.set_color(1.0, 0.0, 0.0); // Red for X
     global_axis_x.set_local_translation(na::Translation3::new(0.5, 0.0, 0.0));
-    
+
     let mut global_axis_y = global_axes.add_cube(0.05, 1.0, 0.05);
     global_axis_y.set_color(0.0, 1.0, 0.0); // Green for Y
     global_axis_y.set_local_translation(na::Translation3::new(0.0, 0.5, 0.0));
-    
+
     let mut global_axis_z = global_axes.add_cube(0.05, 0.05, 1.0);
     global_axis_z.set_color(0.0, 0.0, 1.0); // Blue for Z
     global_axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, 0.5));
 
     // Target Visual (End-effector frame with axes and mesh)
     let mut target_node = window.add_group();
-    
+
     // Add end-effector coordinate axes (small, at TCP)
     let mut ee_axis_x = target_node.add_cube(0.1, 0.01, 0.01);
     ee_axis_x.set_color(1.0, 0.0, 0.0);
     ee_axis_x.set_local_translation(na::Translation3::new(0.05, 0.0, 0.0));
-    
+
     let mut ee_axis_y = target_node.add_cube(0.01, 0.1, 0.01);
     ee_axis_y.set_color(0.0, 1.0, 0.0);
     ee_axis_y.set_local_translation(na::Translation3::new(0.0, 0.05, 0.0));
-    
+
     let mut ee_axis_z = target_node.add_cube(0.01, 0.01, 0.1);
     ee_axis_z.set_color(0.0, 0.0, 1.0);
     ee_axis_z.set_local_translation(na::Translation3::new(0.0, 0.0, 0.05));
-    
+
     // UI Scale factor for overall scene visualization
     let mut ui_scale = 1.0; // Start with 1.0x scaling
-    
+
     // Load and attach end-effector mesh to target_node
     let mut _ee_mesh_node = None; // Keep reference to prevent destruction
     println!("End-effector link: {:?}", robot_view.end_effector_link);
     println!("End-effector path: {:?}", robot_view.end_effector_path);
-    
+
     if let Some(ee_path) = &robot_view.end_effector_path {
         println!("Attempting to load STL from: {:?}", ee_path);
         println!("File exists: {}", ee_path.exists());
-        
+
         if let Some(mesh) = load_stl_mesh(ee_path) {
             println!("✓ STL mesh loaded successfully");
             let mut ee_node = target_node.add_mesh(mesh, na::Vector3::new(1.0, 1.0, 1.0));
@@ -183,36 +185,32 @@ fn main() {
 
     // State
     let mut desired_pos = na::Point3::new(0.2, 0.0, 0.2);
-    let mut desired_roll: f32 = 0.0;
-    let mut desired_pitch: f32 = 0.0;
-    let mut desired_yaw: f32 = 0.0;
+    let mut desired_q = na::UnitQuaternion::from_euler_angles(0.0, 0.0, 0.0);
 
     // Gimbal state with URDF limits
-    let mut gimbal_z: f32 = 0.0;       // [0, 0.2] meters
-    let mut gimbal_yaw: f32 = 0.0;     // [-2.0, 2.0] rad
-    let mut gimbal_pitch: f32 = 0.0;   // [-0.3, 0.5] rad
+    let mut gimbal_z: f32 = 0.0; // [0, 0.2] meters
+    let mut gimbal_yaw: f32 = 0.0; // [-2.0, 2.0] rad
+    let mut gimbal_pitch: f32 = 0.0; // [-0.3, 0.5] rad
     const GIMBAL_Z_MIN: f32 = 0.0;
     const GIMBAL_Z_MAX: f32 = 0.2;
     const GIMBAL_YAW_MIN: f32 = -2.0;
     const GIMBAL_YAW_MAX: f32 = 2.0;
     const GIMBAL_PITCH_MIN: f32 = -0.3;
     const GIMBAL_PITCH_MAX: f32 = 0.5;
-    const GIMBAL_Z_SPEED: f32 = 0.1;     // m/s
-    const GIMBAL_ROT_SPEED: f32 = 0.5;   // rad/s
+    const GIMBAL_Z_SPEED: f32 = 0.1; // m/s
+    const GIMBAL_ROT_SPEED: f32 = 0.5; // rad/s
 
     // 底盘运动控制状态 (模拟发送给上位机的底盘传感器数据)
     // 箭头键控制加速度, ","/"." 控制偏航角速度
-    let mut chassis_ax: f32 = 0.0;   // 底盘前后加速度 (m/s²), ↑/↓
-    let mut chassis_ay: f32 = 0.0;   // 底盘左右加速度 (m/s²), ←/→
-    let mut chassis_gz: f32 = 0.0;   // 底盘偏航角速度 (rad/s), ,/.
-    const CHASSIS_ACCEL: f32 = 2.0;      // 底盘加速度幅值 (m/s²)
-    const CHASSIS_YAW_RATE: f32 = 1.0;   // 底盘偏航角速度幅值 (rad/s)
-    const CHASSIS_DECAY: f32 = 8.0;      // 键松开后归零的衰减系数 (1/s)
+    let mut chassis_ax: f32 = 0.0; // 底盘前后加速度 (m/s²), ↑/↓
+    let mut chassis_ay: f32 = 0.0; // 底盘左右加速度 (m/s²), ←/→
+    let mut chassis_gz: f32 = 0.0; // 底盘偏航角速度 (rad/s), ,/.
+    const CHASSIS_ACCEL: f32 = 2.0; // 底盘加速度幅值 (m/s²)
+    const CHASSIS_YAW_RATE: f32 = 1.0; // 底盘偏航角速度幅值 (rad/s)
+    const CHASSIS_DECAY: f32 = 8.0; // 键松开后归零的衰减系数 (1/s)
 
     let mut current_pos = desired_pos;
-    let mut current_roll = desired_roll;
-    let mut current_pitch = desired_pitch;
-    let mut current_yaw = desired_yaw;
+    let mut current_q = desired_q;
 
     // Config
     let speed_pos = 1.0; // m/s
@@ -258,10 +256,17 @@ fn main() {
                 let dx = (curr.0 - last.0) as f32;
                 let dy = (curr.1 - last.1) as f32;
 
-                // X move -> Yaw
-                desired_yaw -= dx * mouse_sens;
-                // Y move -> Pitch
-                desired_pitch -= dy * mouse_sens;
+                // X move -> Yaw (Global Z axis)
+                let delta_yaw =
+                    na::UnitQuaternion::from_axis_angle(&na::Vector3::z_axis(), -dx * mouse_sens);
+                // Y move -> Pitch (Local Y axis)
+                let delta_pitch =
+                    na::UnitQuaternion::from_axis_angle(&na::Vector3::y_axis(), -dy * mouse_sens);
+
+                // Update desired orientation
+                // 全局 Yaw 乘在左边，局部 Pitch 乘在右边
+                desired_q = delta_yaw * desired_q * delta_pitch;
+                desired_q.renormalize();
             }
         }
         last_cursor = curr_cursor;
@@ -277,7 +282,15 @@ fn main() {
                 WindowEvent::Scroll(_, y, _) => {
                     let is_ctrl = window.get_key(Key::LControl) == Action::Press;
                     let factor = if is_ctrl { 0.1 } else { 0.5 }; // Reduced base speed, keep ctrl factor
-                    desired_roll += y as f32 * 0.1 * factor; // Reduced multiplier from 0.2 to 0.1
+
+                    // Scroll -> Roll (Local Z axis, to twist the end effector)
+                    let delta_roll = na::UnitQuaternion::from_axis_angle(
+                        &na::Vector3::z_axis(),
+                        y as f32 * 0.1 * factor,
+                    );
+                    // 右乘表示基于当前局部坐标系旋转
+                    desired_q = desired_q * delta_roll;
+                    desired_q.renormalize();
                 }
                 WindowEvent::Key(key, action, _) => {
                     if action == Action::Press {
@@ -307,7 +320,7 @@ fn main() {
                                 camera.inner = kiss3d::camera::ArcBall::new(new_eye, camera_target);
                                 camera.inner.set_dist_step(0.5);
                             }
-                            
+
                             Key::F if is_ctrl => cmd_state = YandyControlCmd::ToggleHeld,
                             Key::E if is_ctrl => cmd_state = YandyControlCmd::IncStore,
                             Key::Q if is_ctrl => cmd_state = YandyControlCmd::DecStore,
@@ -385,12 +398,12 @@ fn main() {
 
         // 底盘运动控制 (箭头键 + ,/. 键)
         // ↑/↓ → chassis_ax (前/后), ←/→ → chassis_ay (左/右), ,/. → chassis_gz (左旋/右旋)
-        let ax_input = (window.get_key(Key::Up)    == Action::Press) as i32
-                     - (window.get_key(Key::Down)  == Action::Press) as i32;
-        let ay_input = (window.get_key(Key::Left)  == Action::Press) as i32
-                     - (window.get_key(Key::Right) == Action::Press) as i32;
-        let gz_input = (window.get_key(Key::Comma)  == Action::Press) as i32
-                     - (window.get_key(Key::Period) == Action::Press) as i32;
+        let ax_input = (window.get_key(Key::Up) == Action::Press) as i32
+            - (window.get_key(Key::Down) == Action::Press) as i32;
+        let ay_input = (window.get_key(Key::Left) == Action::Press) as i32
+            - (window.get_key(Key::Right) == Action::Press) as i32;
+        let gz_input = (window.get_key(Key::Comma) == Action::Press) as i32
+            - (window.get_key(Key::Period) == Action::Press) as i32;
 
         if ax_input != 0 {
             chassis_ax = ax_input as f32 * CHASSIS_ACCEL;
@@ -398,7 +411,9 @@ fn main() {
             // 键松开后按衰减系数归零
             let decay = (CHASSIS_DECAY * dt).min(1.0);
             chassis_ax *= 1.0 - decay;
-            if chassis_ax.abs() < 0.01 { chassis_ax = 0.0; }
+            if chassis_ax.abs() < 0.01 {
+                chassis_ax = 0.0;
+            }
         }
 
         if ay_input != 0 {
@@ -406,7 +421,9 @@ fn main() {
         } else {
             let decay = (CHASSIS_DECAY * dt).min(1.0);
             chassis_ay *= 1.0 - decay;
-            if chassis_ay.abs() < 0.01 { chassis_ay = 0.0; }
+            if chassis_ay.abs() < 0.01 {
+                chassis_ay = 0.0;
+            }
         }
 
         if gz_input != 0 {
@@ -414,22 +431,20 @@ fn main() {
         } else {
             let decay = (CHASSIS_DECAY * dt).min(1.0);
             chassis_gz *= 1.0 - decay;
-            if chassis_gz.abs() < 0.01 { chassis_gz = 0.0; }
+            if chassis_gz.abs() < 0.01 {
+                chassis_gz = 0.0;
+            }
         }
 
         // Damping
         let alpha = (damping * dt).min(1.0);
         current_pos.coords = current_pos.coords.lerp(&desired_pos.coords, alpha);
 
-        current_roll += (desired_roll - current_roll) * alpha;
-        current_pitch += (desired_pitch - current_pitch) * alpha;
-        current_yaw += (desired_yaw - current_yaw) * alpha;
+        current_q = current_q.slerp(&desired_q, alpha);
 
         // Update Visuals
-        let rotation =
-            na::UnitQuaternion::from_euler_angles(current_roll, current_pitch, current_yaw);
         target_node.set_local_translation(na::Translation3::from(current_pos.coords));
-        target_node.set_local_rotation(rotation);
+        target_node.set_local_rotation(current_q);
 
         // Draw Text
         window.draw_text(
@@ -442,11 +457,9 @@ fn main() {
             &kiss3d::text::Font::default(),
             &na::Point3::new(1.0, 1.0, 1.0),
         );
+        let euler = current_q.euler_angles();
         window.draw_text(
-            &format!(
-                "RPY: {:.2} {:.2} {:.2}",
-                current_roll, current_pitch, current_yaw
-            ),
+            &format!("RPY: {:.2} {:.2} {:.2}", euler.0, euler.1, euler.2),
             &na::Point2::new(10.0, 50.0),
             40.0,
             &kiss3d::text::Font::default(),
@@ -509,9 +522,10 @@ fn main() {
             x: current_pos.x,
             y: current_pos.y,
             z: current_pos.z,
-            roll: current_roll,
-            pitch: current_pitch,
-            yaw: current_yaw,
+            ee_qw: current_q.w,
+            ee_qx: current_q.i,
+            ee_qy: current_q.j,
+            ee_qz: current_q.k,
             gimbal_z,
             gimbal_yaw,
             gimbal_pitch,
@@ -519,7 +533,7 @@ fn main() {
             // 底盘传感器模拟: ax/ay 由箭头键控制, az=+9.81 (静止水平 IMU Z 比力)
             ax: chassis_ax,
             ay: chassis_ay,
-            az: 9.81,    // IMU Z 比力: 静止水平时 ≈ +g
+            az: 9.81, // IMU Z 比力: 静止水平时 ≈ +g
             gx: 0.0,
             gy: 0.0,
             gz: chassis_gz,
