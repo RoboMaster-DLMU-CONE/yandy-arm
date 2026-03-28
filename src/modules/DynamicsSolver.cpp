@@ -799,19 +799,33 @@ void DynamicsSolver<kFloating>::setEndEffectorMass(double mass)
     auto& link6_inertia = m_model.inertias[link6_joint_id];
     
     // 保存原始质量 (首次调用时记录)
-    static const double original_mass = link6_inertia.mass();
+    // 使用 static 变量 + once_flag 确保只初始化一次
+    static std::once_flag init_flag;
+    static double original_mass = 0.0;
+    static pinocchio::Inertia original_inertia;
     
-    // 设置新质量 = 原始质量 + 负载质量
-    const double new_mass = original_mass + mass;
+    std::call_once(init_flag, [&]() {
+        original_mass = link6_inertia.mass();
+        original_inertia = link6_inertia;
+        m_logger->info("End-effector original inertia saved: mass={:.3f} kg", original_mass);
+    });
     
-    // 更新质量
-    link6_inertia.mass() = new_mass;
+    // 构建负载的 Spatial Inertia 对象
+    // 假设负载质心相对于 link_6 中心偏移约 10cm (沿末端 Z 轴方向)
+    // 矿石被夹持时，重心在末端前方
+    Eigen::Vector3d payload_com_offset(0.0, 0.0, 0.10); 
+    // 矿石自身的转动惯量 (简单视作小球)
+    Eigen::Matrix3d payload_rot_inertia = Eigen::Matrix3d::Identity() * 0.001; 
+    pinocchio::Inertia payload_inertia(mass, payload_com_offset, payload_rot_inertia);
     
-    // 注意：这里简化处理，假设负载质心与 link_6 质心重合
-    // 如果需要更精确的模型，应该额外考虑负载的质心位置和惯性张量
+    // 关键操作：直接把负载的惯量"加"到关节上
+    link6_inertia = original_inertia + payload_inertia;
     
-    m_logger->info("End-effector mass set to {:.3f} kg (original: {:.3f}, load: {:.3f})",
-                   new_mass, original_mass, mass);
+    // 注意：Pinocchio 的 RNEA 每次都会从 model.inertias 重新计算，
+    // 所以修改 inertias 后不需要额外更新 data
+    
+    m_logger->info("End-effector inertia updated: mass={:.3f} kg (original: {:.3f}, load: {:.3f})",
+                   original_mass + mass, original_mass, mass);
 }
 
 // ============================================================================

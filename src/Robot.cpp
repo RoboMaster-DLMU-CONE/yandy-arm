@@ -229,21 +229,32 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
     m_store_retreat_distance_m =
         store["retreat_distance_m"].value<double>().value_or(
             m_store_retreat_distance_m);
-    m_store_retreat_offset_x_m =
-        store["retreat_offset_x_m"].value<double>().value_or(m_store_retreat_offset_x_m);
-    m_store_retreat_offset_y_m =
-        store["retreat_offset_y_m"].value<double>().value_or(m_store_retreat_offset_y_m);
-    m_retrieve_z_offset_m = store["retrieve_z_offset_m"].value<double>().value_or(m_retrieve_z_offset_m);
-    m_retrieve_yaw_offset_rad = store["retrieve_yaw_offset_rad"].value<double>().value_or(m_retrieve_yaw_offset_rad);
+    // retreat pose (存矿退回位姿)
+    m_store_retreat_x_m = store["retreat_x_m"].value<double>().value_or(m_store_retreat_x_m);
+    m_store_retreat_y_m = store["retreat_y_m"].value<double>().value_or(m_store_retreat_y_m);
+    m_store_retreat_z_m = store["retreat_z_m"].value<double>().value_or(m_store_retreat_z_m);
+    m_store_retreat_roll_m = store["retreat_roll_m"].value<double>().value_or(m_store_retreat_roll_m);
+    m_store_retreat_pitch_m = store["retreat_pitch_m"].value<double>().value_or(m_store_retreat_pitch_m);
+    m_store_retreat_yaw_m = store["retreat_yaw_m"].value<double>().value_or(m_store_retreat_yaw_m);
+    // prefetch pose (取矿预抓取位姿)
+    m_retrieve_prefetch_x_m = store["prefetch_x_m"].value<double>().value_or(m_retrieve_prefetch_x_m);
+    m_retrieve_prefetch_y_m = store["prefetch_y_m"].value<double>().value_or(m_retrieve_prefetch_y_m);
+    m_retrieve_prefetch_z_m = store["prefetch_z_m"].value<double>().value_or(m_retrieve_prefetch_z_m);
+    m_retrieve_prefetch_roll_m = store["prefetch_roll_m"].value<double>().value_or(m_retrieve_prefetch_roll_m);
+    m_retrieve_prefetch_pitch_m = store["prefetch_pitch_m"].value<double>().value_or(m_retrieve_prefetch_pitch_m);
+    m_retrieve_prefetch_yaw_m = store["prefetch_yaw_m"].value<double>().value_or(m_retrieve_prefetch_yaw_m);
   }
   m_logger->info("Store params: approach_offset={:.3f}, "
                  "pause_after_above_s={:.3f}, wait_before_open_s={:.3f}, wait_after_open_s={:.3f}, "
                  "wait_after_close_s={:.3f}, extra_z_above_store_m={:.3f}, retreat_distance_m={:.3f}, "
-                 "retreat_offset_x_m={:.3f}, retreat_offset_y_m={:.3f}, "
-                 "retrieve_z_offset_m={:.3f}, retrieve_yaw_offset_rad={:.3f}",
+                 "retreat=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}], "
+                 "prefetch=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
                  m_store_approach_offset, m_store_pause_after_above_s, m_store_wait_before_open_s, m_store_wait_after_open_s, m_store_wait_after_close_s,
-                 m_store_extra_z_above_store_m, m_store_retreat_distance_m, m_store_retreat_offset_x_m, m_store_retreat_offset_y_m,
-                 m_retrieve_z_offset_m, m_retrieve_yaw_offset_rad);
+                 m_store_extra_z_above_store_m, m_store_retreat_distance_m,
+                 m_store_retreat_x_m, m_store_retreat_y_m, m_store_retreat_z_m,
+                 m_store_retreat_roll_m, m_store_retreat_pitch_m, m_store_retreat_yaw_m,
+                 m_retrieve_prefetch_x_m, m_retrieve_prefetch_y_m, m_retrieve_prefetch_z_m,
+                 m_retrieve_prefetch_roll_m, m_retrieve_prefetch_pitch_m, m_retrieve_prefetch_yaw_m);
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -883,10 +894,18 @@ void yandy::Robot::resetFetchState() {
 void yandy::Robot::updatePayloadMass() {
   // 根据夹爪实际状态 (isHolding) 来决定是否附加负载
   const bool is_holding = m_effector.isHolding();
-  
+
+  // 调试日志：每 100 帧打印一次当前状态
+  static int log_counter = 0;
+  if (++log_counter % 100 == 0) {
+    m_logger->debug("Claw state: is_holding={}, payload_attached={}", 
+                    is_holding, m_payload_attached);
+  }
+
   // 只在状态变化时更新，避免重复调用
   if (is_holding && !m_payload_attached) {
     // 夹爪夹持物体，附加 600g 负载
+    m_logger->warn(">>> Claw CLOSED, adding payload compensation...");
     withSolver([&](auto &s) {
       s.setEndEffectorMass(PAYLOAD_MASS);
     });
@@ -894,6 +913,7 @@ void yandy::Robot::updatePayloadMass() {
     m_logger->info("Payload attached: +{:.1f}g (claw holding)", PAYLOAD_MASS * 1000);
   } else if (!is_holding && m_payload_attached) {
     // 夹爪张开，移除负载
+    m_logger->warn(">>> Claw OPENED, removing payload compensation...");
     withSolver([&](auto &s) {
       s.setEndEffectorMass(0.0);
     });
@@ -1178,48 +1198,40 @@ void yandy::Robot::handleStore() {
       break;
     }
     case StorePhase::Retreating: {
-      // 计算相对于 store_frame 的 XY 偏移目标（使用 store_frame.z + 可选 retrieve_z_offset）
-      Eigen::Isometry3d base_target = sp;
-      base_target.translation().z() += m_retrieve_z_offset_m; // 用户指定相对 base_link 的 z 偏移
-
-      // Interpret retreat offsets in base_link frame: add along base_link X/Y
-      Eigen::Vector3d target_pos = base_target.translation()
-          + Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
-          + Eigen::Vector3d::UnitY() * m_store_retreat_offset_y_m;
-
       // 自动根据 store_frame 的 y 值决定镜像：
       // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
-      const Eigen::Vector3d applied_offsets = Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
-          + Eigen::Vector3d::UnitY() * (sign_y * m_store_retreat_offset_y_m);
-      const double applied_yaw = sign_y * m_retrieve_yaw_offset_rad;
-      target_pos = base_target.translation() + applied_offsets;
 
-      m_logger->info("Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, z={:.3f}] (base_link offsets x={:.3f}, y={:.3f}, z_lift={:.3f}, applied_yaw={:.3f})",
-                     target_pos.x(), target_pos.y(), target_pos.z(), m_store_retreat_offset_x_m, sign_y * m_store_retreat_offset_y_m, m_store_extra_z_above_store_m, applied_yaw);
+      // 构建 retreat 位姿：store_frame * transform(retreat_pose)
+      // retreat_pose = [x, y, z, roll, pitch, yaw]
+      double y_offset = sign_y * m_store_retreat_y_m;
+      double yaw_offset = sign_y * m_store_retreat_yaw_m;
 
-      // 构造朝向：在目标上应用额外的绕末端局部 X 轴的偏航（用户语义：相对于 base_link 为 yaw）
-      // (apply rotation around the end-effector's local X axis)
-      Eigen::Isometry3d ee_pose = withSolver([](auto &s) { return s.getEndEffectorPose(); });
-      const double yaw = applied_yaw;
-      // Rotation about local X (end-effector frame). Compose as R_des = R_ee * R_x(yaw_local)
-      Eigen::AngleAxisd x_local(yaw, Eigen::Vector3d::UnitX());
-      Eigen::Matrix3d R_des = ee_pose.rotation() * x_local.toRotationMatrix();
+      Eigen::Isometry3d retreat_offset = Eigen::Isometry3d::Identity();
+      retreat_offset.translate(Eigen::Vector3d(
+          m_store_retreat_x_m, y_offset, m_store_retreat_z_m));
+      retreat_offset.rotate(
+          Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
+          Eigen::AngleAxisd(m_store_retreat_pitch_m, Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(m_store_retreat_roll_m, Eigen::Vector3d::UnitX()));
 
-      m_target_pose = Eigen::Isometry3d::Identity();
-      m_target_pose.translate(target_pos);
-      m_target_pose.rotate(R_des);
+      Eigen::Isometry3d retreat_target = sp * retreat_offset;
 
-      // 使用 6DoF IK 优先尝试，若失败再尝试 5DoF
-      if (!solveAndPlan(m_target_pose)) {
+      m_logger->info("Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+                     retreat_target.translation().x(), retreat_target.translation().y(), retreat_target.translation().z(),
+                     m_store_retreat_x_m, y_offset, m_store_retreat_z_m,
+                     m_store_retreat_roll_m, m_store_retreat_pitch_m, yaw_offset, sign_y);
+
+      // 使用 6DoF IK 直接求解到 retreat_target
+      if (!solveAndPlan(retreat_target)) {
         // 作为回退，尝试 5DoF 约束朝向为 -store_frame.Z
         const Eigen::Vector3d approach_dir = -sp.rotation().col(2).normalized();
-        if (!solveAndPlan5DoF(target_pos, approach_dir, true))
+        if (!solveAndPlan5DoF(retreat_target.translation(), approach_dir, true))
           return;
       }
 
       const Eigen::Vector3d cur = withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
-      if ((cur - target_pos).norm() < 0.03 && m_planner->isFinished()) {
+      if ((cur - retreat_target.translation()).norm() < 0.03 && m_planner->isFinished()) {
         m_logger->info("Store: reposition complete, exiting store mode");
         withSolver([](auto &s) { s.setBaseLinkCollisionEnabled(true); });
         m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
@@ -1233,49 +1245,45 @@ void yandy::Robot::handleStore() {
     // 取矿: AtTarget（store位置）→ 闭爪 → Retracting（上方）→ 退出
     switch (m_store_phase) {
     case StorePhase::PreFetch: {
-      // 计算相对于 store_frame 的 XY 偏移目标（使用 store_frame.z + 可选 retrieve_z_offset）
-      Eigen::Isometry3d base_target = sp;
-      base_target.translation().z() += m_retrieve_z_offset_m; // 用户指定相对 base_link 的 z 偏移
-
-      // Interpret retreat offsets in base_link frame: add along base_link X/Y
-      Eigen::Vector3d target_pos = base_target.translation()
-          + Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
-          + Eigen::Vector3d::UnitY() * m_store_retreat_offset_y_m;
-
       // 自动根据 store_frame 的 y 值决定镜像：
       // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
-      const Eigen::Vector3d applied_offsets = Eigen::Vector3d::UnitX() * m_store_retreat_offset_x_m
-          + Eigen::Vector3d::UnitY() * (sign_y * m_store_retreat_offset_y_m);
-      const double applied_yaw = sign_y * m_retrieve_yaw_offset_rad;
-      target_pos = base_target.translation() + applied_offsets;
 
-      m_logger->info("Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, y={:.3f}, z={:.3f}] (base_link offsets x={:.3f}, y={:.3f}, z_lift={:.3f}, applied_yaw={:.3f})",
-                     target_pos.x(), target_pos.y(), target_pos.z(), m_store_retreat_offset_x_m, sign_y * m_store_retreat_offset_y_m, m_retrieve_z_offset_m, applied_yaw);
+      // 构建 prefetch 位姿：store_frame * transform(prefetch_pose)
+      // prefetch_pose = [x, y, z, roll, pitch, yaw]
+      double y_offset = sign_y * m_retrieve_prefetch_y_m;
+      double yaw_offset = sign_y * m_retrieve_prefetch_yaw_m;
 
-      // 构造朝向：使用 store_frame 的旋转作为参考，再应用额外的绕局部 X 轴的偏航
-      // (apply rotation around the store_frame's local X axis)
-      const double yaw = applied_yaw;
-      Eigen::AngleAxisd x_local(yaw, Eigen::Vector3d::UnitX());
-      Eigen::Matrix3d R_des = sp.rotation() * x_local.toRotationMatrix();
+      Eigen::Isometry3d prefetch_offset = Eigen::Isometry3d::Identity();
+      prefetch_offset.translate(Eigen::Vector3d(
+          m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m));
+      prefetch_offset.rotate(
+          Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
+          Eigen::AngleAxisd(m_retrieve_prefetch_pitch_m, Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(m_retrieve_prefetch_roll_m, Eigen::Vector3d::UnitX()));
 
-      m_target_pose = Eigen::Isometry3d::Identity();
-      m_target_pose.translate(target_pos);
-      m_target_pose.rotate(R_des);
+      Eigen::Isometry3d prefetch_target = sp * prefetch_offset;
 
-      // 使用 6DoF IK 优先尝试，若失败再尝试 5DoF
-      if (!solveAndPlan(m_target_pose)) {
+      m_logger->info("Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+                     prefetch_target.translation().x(), prefetch_target.translation().y(), prefetch_target.translation().z(),
+                     m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m,
+                     m_retrieve_prefetch_roll_m, m_retrieve_prefetch_pitch_m, yaw_offset, sign_y);
+
+      // 使用 6DoF IK 直接求解到 prefetch_target
+      if (!solveAndPlan(prefetch_target)) {
         // 作为回退，尝试 5DoF 约束朝向为 -store_frame.Z
         const Eigen::Vector3d approach_dir = -sp.rotation().col(2).normalized();
-        if (!solveAndPlan5DoF(target_pos, approach_dir, true))
+        if (!solveAndPlan5DoF(prefetch_target.translation(), approach_dir, true))
           return;
       }
 
       const Eigen::Vector3d cur = withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
-      if ((cur - target_pos).norm() < 0.03 && m_planner->isFinished()) {
+      if ((cur - prefetch_target.translation()).norm() < 0.03 && m_planner->isFinished()) {
         m_logger->info("Store (retrieve PreFetch): pre-fetch position reached, starting dwell before lowering");
         m_store_phase = StorePhase::PausePreFetch;
         m_store_phase_start = std::chrono::steady_clock::now();
+        // 保存 prefetch_target 供 PausePreFetch 阶段使用
+        m_target_pose = prefetch_target;
       }
       break;
     }

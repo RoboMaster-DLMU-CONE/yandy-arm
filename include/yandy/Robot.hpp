@@ -140,16 +140,24 @@ private:
   double m_store_wait_after_close_s{0.05};
   double m_store_extra_z_above_store_m{0.04}; // lift amount above store_frame after open
   double m_store_retreat_distance_m{0.10};    // retreat distance along -EE_Z (default)
-  // retreat target offsets relative to store_frame X/Y (meters). Use these to compute
-  // post-open retreat target as: lift_pose + X*offset_x + Y*offset_y
-  double m_store_retreat_offset_x_m{0.02};
-  double m_store_retreat_offset_y_m{0.00};
+  // retreat pose relative to store_frame (meters, radians). The final target is computed as:
+  // store_frame * transform(retreat_pose). For store_frame_2 (y<0), y and yaw are mirrored.
+  double m_store_retreat_x_m{0.07};
+  double m_store_retreat_y_m{0.02};
+  double m_store_retreat_z_m{0.03};
+  double m_store_retreat_roll_m{0.0};
+  double m_store_retreat_pitch_m{0.0};
+  double m_store_retreat_yaw_m{0.0};
 
-  // ---- 新增: retrieve（取矿）自定义参数 ----
-  // 在 retrieve 阶段，抵达 store_frame 后的额外偏移（相对 base_link 的 z 偏移）
-  double m_retrieve_z_offset_m{0.02};
-  // 在 retrieve 阶段，允许绕末端 Z 轴的偏航调整（弧度）以改善 IK
-  double m_retrieve_yaw_offset_rad{0.0};
+  // ---- 新增：retrieve（取矿）自定义参数 ----
+  // PreFetch 位姿相对 store_frame 的偏移（xyz + rpy），最终目标 = store_frame * transform(prefetch_offset)
+  // 对于 store_frame_2 (y<0)，y 和 yaw 会镜像
+  double m_retrieve_prefetch_x_m{0.07};
+  double m_retrieve_prefetch_y_m{0.02};
+  double m_retrieve_prefetch_z_m{0.03};
+  double m_retrieve_prefetch_roll_m{0.0};
+  double m_retrieve_prefetch_pitch_m{0.0};
+  double m_retrieve_prefetch_yaw_m{0.0};
   // PreFetch 位置停留时间（在下降到 store_frame 之前）
   double m_store_pause_pre_fetch_s{0.1};
 
