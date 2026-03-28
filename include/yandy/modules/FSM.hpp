@@ -193,15 +193,16 @@ namespace boost::msm::front::puml
         template <class EVT, class FSM, class S, class T>
         void operator()(EVT const&, FSM& fsm, S&, T&)
         {
-            static bool open = false;
-            open = !open;
-            if (open)
-            {
+            // 不再使用静态变量，而是查询夹爪实际状态
+            // 如果夹爪已闭合/正在闭合，则张开；否则闭合
+            bool should_open = fsm.callbacks.is_claw_closed ? fsm.callbacks.is_claw_closed() : false;
+            
+            if (should_open) {
                 if (fsm.callbacks.on_open_claw) fsm.callbacks.on_open_claw();
-            }
-            else
-            {
+                fsm.m_logger->info("toggle_gripper: opening claw");
+            } else {
                 if (fsm.callbacks.on_close_claw) fsm.callbacks.on_close_claw();
+                fsm.m_logger->info("toggle_gripper: closing claw");
             }
         }
     };
@@ -330,6 +331,7 @@ namespace yandy::modules
             std::function<void()> on_brake;
             std::function<void(int pose_index)> on_enter_store;
             std::function<void()> on_enter_fetch;  // 进入抓取模式时调用 (重置状态)
+            std::function<bool()> is_claw_closed;  // 查询夹爪是否已闭合/正在闭合
         };
 
         class YandyArmFSMDef : public msm::front::state_machine_def<YandyArmFSMDef>

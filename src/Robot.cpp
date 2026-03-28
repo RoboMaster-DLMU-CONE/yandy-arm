@@ -82,6 +82,11 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
                                                : StorePhase::PreFetch;
   };
   cb.on_enter_fetch = [this] { resetFetchState(); };
+  // 查询夹爪是否已闭合/正在闭合（用于 toggle_gripper 决策）
+  cb.is_claw_closed = [this] { 
+    return m_effector.isClosed() || m_effector.getState() == modules::Effector::State::Closing || 
+           m_effector.getState() == modules::Effector::State::Holding; 
+  };
   m_fsm.setCallbacks(cb);
 
   m_input.setCommandCb(
