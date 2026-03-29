@@ -72,8 +72,14 @@ namespace yandy::modules
 
         private:
             void on_serial_read(std::span<const std::byte> data);
-            void on_serial_error(ssize_t e) const;
+            void on_serial_error(ssize_t e);
+            void reconnect_worker();
+
             std::unique_ptr<HySerial::Serial> m_serial;
+            HySerial::SerialConfig m_cfg;
+            std::atomic<bool> m_running{true};
+            std::atomic<bool> m_need_reconnect{false};
+            std::thread m_reconnect_thread;
         };
     }
 

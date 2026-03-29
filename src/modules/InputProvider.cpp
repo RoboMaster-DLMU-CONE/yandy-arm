@@ -99,6 +99,12 @@ UsbProvider::UsbProvider() {
   auto device = tbl["usb"]["device"].value<std::string>().value();
   auto baud_rate = tbl["usb"]["baud_rate"].value<uint32_t>().value();
 
+  m_cfg.device_path = device;
+  m_cfg.baud_rate = baud_rate;
+  m_cfg.data_bits = HySerial::DataBits::BITS_8;
+  m_cfg.parity = HySerial::Parity::NONE;
+  m_cfg.stop_bits = HySerial::StopBits::ONE;
+
   HySerial::Builder builder;
   builder.device(device)
       .baud_rate(baud_rate)
@@ -118,16 +124,23 @@ UsbProvider::UsbProvider() {
   }
   m_serial = std::move(serial_or_err.value());
   m_serial->start_read();
+  
+  m_reconnect_thread = std::thread(&UsbProvider::reconnect_worker, this);
 }
 
 UsbProvider::~UsbProvider() {
-  if (m_serial) {
-    m_serial->stop_read();
+  m_running.store(false);
+  if (m_reconnect_thread.joinable()) {
+      m_reconnect_thread.join();
   }
 }
 
 void UsbProvider::on_serial_read(std::span<const std::byte> data) {
   const auto size = data.size();
+  static int read_count = 0;
+  if (++read_count % 100 == 0) {
+      m_logger->debug("UsbProvider received {} bytes", size);
+  }
   const auto u8_data = reinterpret_cast<const uint8_t *>(data.data());
   (void)m_par.push_data(u8_data, size)
       .map([this](void) {
@@ -138,9 +151,46 @@ void UsbProvider::on_serial_read(std::span<const std::byte> data) {
       .or_else([this](auto &&e) { m_logger->error(e.message); });
 }
 
-void UsbProvider::on_serial_error(const ssize_t e) const {
-  m_logger->error("{}", strerror(static_cast<int>(e)));
+void UsbProvider::on_serial_error(const ssize_t e) {
+  if (e == -EINTR || e == -EAGAIN || e == -EWOULDBLOCK) {
+      return;
+  }
+  m_logger->error("UsbProvider error: {}", e);
+  m_need_reconnect.store(true);
 }
+
+void UsbProvider::reconnect_worker() {
+    while (m_running.load()) {
+        if (m_need_reconnect.load()) {
+            m_logger->warn("Serial connection lost, attempting to reconnect in 1s...");
+            m_serial->stop_read();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            
+            // Re-create the serial instance using the builder
+            HySerial::Builder builder;
+            builder.device(m_cfg.device_path)
+                  .baud_rate(m_cfg.baud_rate)
+                  .data_bits(m_cfg.data_bits)
+                  .parity(m_cfg.parity)
+                  .stop_bits(m_cfg.stop_bits);
+                  
+            builder.on_read([this](const std::span<const std::byte> data) { on_serial_read(data); });
+            builder.on_error([this](const ssize_t e) { on_serial_error(e); });
+            
+            auto serial_or_err = builder.build();
+            if (serial_or_err) {
+                m_serial = std::move(serial_or_err.value());
+                m_serial->start_read();
+                m_logger->info("Serial connection restored successfully.");
+                m_need_reconnect.store(false);
+            } else {
+                m_logger->error("Failed to reconnect: {}", serial_or_err.error().message);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
 } // namespace detail
 
 InputProvider::InputProvider() {
