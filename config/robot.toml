@@ -54,17 +54,17 @@ wait_after_close_s = 0.8
 pause_pre_fetch_s = 0.1
 # 存矿退回位姿（retreat）：相对 store_frame 的偏移 (xyz + rpy)
 # 对于 store_frame_2 (y<0)，y 和 yaw 会自动镜像
-retreat_x_m = 0.0609
-retreat_y_m = 0.0581
-retreat_z_m = -0.0884
+retreat_x_m = 0.0606
+retreat_y_m = 0.0411
+retreat_z_m = -0.0658
 retreat_roll_m = 0.9869
 retreat_pitch_m = 0.8023
 retreat_yaw_m = 0.8133
 # 取矿预抓取位姿（prefetch）：相对 store_frame 的偏移 (xyz + rpy)
 # 对于 store_frame_2 (y<0)，y 和 yaw 会自动镜像
-prefetch_x_m = 0.07
-prefetch_y_m = 0.02
-prefetch_z_m = 0.03
-prefetch_roll_m = 0.0
-prefetch_pitch_m = 0.0
-prefetch_yaw_m = 0.0
+prefetch_x_m = 0.0606
+prefetch_y_m = 0.0411
+prefetch_z_m = -0.0658
+prefetch_roll_m = 0.9869
+prefetch_pitch_m = 0.8023
+prefetch_yaw_m = 0.8133
