@@ -142,13 +142,15 @@ void UsbProvider::on_serial_read(std::span<const std::byte> data) {
       m_logger->debug("UsbProvider received {} bytes", size);
   }
   const auto u8_data = reinterpret_cast<const uint8_t *>(data.data());
-  (void)m_par.push_data(u8_data, size)
-      .map([this](void) {
-        const auto packet = m_des.get<YandyControlPack>();
-        update_cmd(packet.cmd);
-        m_buf.write(packet);
-      })
-      .or_else([this](auto &&e) { m_logger->error(e.message); });
+  
+  auto res = m_par.push_data(u8_data, size);
+  if (!res) {
+      m_logger->error("Parser push_data failed: {}", res.error().message);
+  } else {
+      const auto packet = m_des.get<YandyControlPack>();
+      update_cmd(packet.cmd);
+      m_buf.write(packet);
+  }
 }
 
 void UsbProvider::on_serial_error(const ssize_t e) {
