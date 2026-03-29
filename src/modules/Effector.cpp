@@ -65,7 +65,7 @@ public:
     m_logger->info("张开夹爪");
     m_state = State::Opening;
     m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque);
+    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque); // 张开的方向应该和闭合的力矩方向相反，如果dir影响的是位置，那推力也是跟着dir变的。由于之前你是正常的，我先将其恢复为你代码原始的配置，仅仅加上方向。
   }
 
   void closeClaw() override {
@@ -75,7 +75,7 @@ public:
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
     m_motor.setPosRef(m_offset);
-    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque);
+    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
   }
@@ -199,7 +199,7 @@ private:
 
     // 张开到限位位置（0.5 相对于零点，考虑 dir）
     m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(m_mitFeedforwardTorque);
+    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque);
   }
 
   void enterHolding(float holdPosition) {
