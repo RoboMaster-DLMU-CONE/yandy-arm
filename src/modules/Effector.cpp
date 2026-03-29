@@ -74,12 +74,14 @@ public:
     if (m_state == State::Closing || m_state == State::Holding) {
       return;
     }
-    m_logger->info("闭合夹爪");
+    m_logger->info("闭合夹爪 (目标: 超过原零点 0.2 rad)");
     m_state = State::Closing;
-    m_motor.setPosRef(m_offset);
-    m_motor.setTorRef(
-        -m_dir *
-        m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
+    
+    // 目标位置: 往闭合方向（m_dir）多走 0.2 rad
+    float over_close_pos = m_offset + m_dir * 0.2f;
+    m_motor.setPosRef(over_close_pos);
+    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
+    
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
   }
@@ -111,11 +113,18 @@ public:
 
       m_closingStartTicks++;
 
-      // 正常闭合到达目标判断
-      float posError = std::abs(m_offset - currentPos);
+      // 正常闭合到达目标判断 (超过原零点 0.2 rad)
+      float over_close_pos = m_offset + m_dir * 0.2f;
+      float posError = std::abs(over_close_pos - currentPos);
       if (posError < 0.05f) {
         m_state = State::Idle;
         m_logger->info("夹爪已完全闭合 (未检测到物体)");
+        
+        // 可选：如果到达了这个极限位置，也许这里就是新的物理极限，
+        // 我们也可以把这里当做新的零点，但目前用户需求是“检测到电流加大”时更新，
+        // 如果能走到这里说明没有碰壁。我们可以暂时什么都不做，或者也可以更新零点。
+        // 根据“如果在零点之后检测到电流加大，那就把这个新的点作为新的零点更新”，
+        // 这里没有电流加大，所以仅仅只是走到了设定最大位置。
         break;
       }
 
@@ -127,10 +136,28 @@ public:
                              m_zeroingVelocityThreshold * 2.0f;
 
         if (collision) {
-          m_logger->info(
-              "检测到物体，切换到保持模式 (pos={:.3f}, current={:.1f}mA)",
-              currentPos, currentMA);
-          enterHolding(currentPos);
+          // 判断碰撞位置是否在原零点之后
+          // 因为 m_dir 是闭合方向，所以 m_dir * (currentPos - m_offset) 如果大于 0，说明超过了原零点
+          // 举例：m_dir = -1, m_offset = 0。currentPos = -0.1，则 -1 * (-0.1 - 0) = 0.1 > 0
+          bool is_past_zero = (m_dir * (currentPos - m_offset) > 0.0f);
+          
+          if (is_past_zero) {
+            m_logger->info(
+                "在原零点之后检测到物体，更新零点并切换到保持模式 (pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
+                currentPos, m_offset, currentMA);
+            
+            // 更新新的零点
+            m_offset = currentPos;
+            
+            // 保持位置在新的零点的 -0.05rad 之前 (偏向张开方向)
+            float holdPosition = m_offset - m_dir * 0.05f;
+            enterHolding(holdPosition);
+          } else {
+            m_logger->info(
+                "在原零点之前检测到物体，切换到保持模式 (pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
+                currentPos, m_offset, currentMA);
+            enterHolding(currentPos);
+          }
         }
       }
 
