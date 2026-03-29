@@ -111,7 +111,6 @@ int main() {
   std::string input;
   logger->info("Enter command:");
   while (g_running) {
-    std::cout << "> " << std::flush;
 
     if (readInput(input)) {
       // 有输入

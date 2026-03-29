@@ -65,7 +65,9 @@ public:
     m_logger->info("张开夹爪");
     m_state = State::Opening;
     m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque); // 张开的方向应该和闭合的力矩方向相反，如果dir影响的是位置，那推力也是跟着dir变的。由于之前你是正常的，我先将其恢复为你代码原始的配置，仅仅加上方向。
+    m_motor.setTorRef(
+        m_dir *
+        m_mitFeedforwardTorque); // 张开的方向应该和闭合的力矩方向相反，如果dir影响的是位置，那推力也是跟着dir变的。由于之前你是正常的，我先将其恢复为你代码原始的配置，仅仅加上方向。
   }
 
   void closeClaw() override {
@@ -75,7 +77,9 @@ public:
     m_logger->info("闭合夹爪");
     m_state = State::Closing;
     m_motor.setPosRef(m_offset);
-    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
+    m_motor.setTorRef(
+        -m_dir *
+        m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
   }
@@ -118,8 +122,9 @@ public:
       // 启动防抖：前 25 帧（约 100ms，假设 250Hz）不进行碰撞检测
       if (m_closingStartTicks > 25) {
         // 碰撞检测：电流超过阈值 且 速度极小
-        bool collision = std::abs(currentMA) > m_collisionCurrentThreshold && 
-                         std::abs(status.reduced_angular_rad_s) < m_zeroingVelocityThreshold * 2.0f;
+        bool collision = std::abs(currentMA) > m_collisionCurrentThreshold &&
+                         std::abs(status.reduced_angular_rad_s) <
+                             m_zeroingVelocityThreshold * 2.0f;
 
         if (collision) {
           m_logger->info(
@@ -175,7 +180,7 @@ private:
     constexpr int kLoopIntervalMs = 2;
 
     // 往闭合方向施加力矩直到堵转（考虑 dir 方向）
-    m_motor.setPosRef(m_dir * 10.0f);
+    m_motor.setPosRef(m_dir * 5.0f);
     m_motor.setTorRef(m_dir * m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
@@ -194,12 +199,8 @@ private:
     m_offset = status.reduced_angle_rad; // 零点的实际位置作为 offset
 
     m_logger->info("回零完成, 零点实际位置={:.4f} rad (offset)", m_offset);
-
-    m_state = State::Idle;
-
-    // 张开到限位位置（0.5 相对于零点，考虑 dir）
-    m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque);
+    m_motor.setPosRef(0);
+    m_motor.setTorRef(0);
   }
 
   void enterHolding(float holdPosition) {

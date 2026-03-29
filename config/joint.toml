@@ -1,6 +1,6 @@
 # Joint 配置
 # simulate: true = 使用仿真机械臂（FakeArmHW），false = 使用真实 CAN 电机（RealArmHW）
-simulate = true
+simulate = false
 can_port = "can0"
 
 [joint_1]
@@ -8,8 +8,8 @@ can_id = 0x01
 master_id = 0x11
 offset = 0.0
 dir = -1.0
-gear_ratio = 0.5
-mit_pid = { kp = 26.0, kd = 1.0 }
+gear_ratio = 2.0
+mit_pid = { kp = 15.0, kd = 1.0 }
 
 [joint_2]
 can_id = 0x02
@@ -17,7 +17,7 @@ master_id = 0x12
 offset = 0.0
 dir = -1.0
 gear_ratio = 1.0
-mit_pid = { kp = 25.0, kd = 0.9 }
+mit_pid = { kp = 20.0, kd = 0.9 }
 
 [joint_3]
 can_id = 0x03
@@ -25,14 +25,14 @@ master_id = 0x13
 offset = 0.0
 dir = 1.0
 gear_ratio = 1.0
-mit_pid = { kp = 23.0, kd = 1.0 }
+mit_pid = { kp = 20.0, kd = 1.0 }
 
 [joint_4]
 id = 7
 offset = 0.0
 dir = -1.0
 gear_ratio = 1.0
-mit_pid = { kp = 25.0, kd = 0.8 }
+mit_pid = { kp = 20.0, kd = 0.8 }
 
 [joint_5]
 can_id = 0x05
@@ -40,7 +40,7 @@ master_id = 0x15
 offset = 0.0
 dir = 1.0
 gear_ratio = 1.0
-mit_pid = { kp = 18.0, kd = 0.8 }
+mit_pid = { kp = 5.0, kd = 0.8 }
 
 [joint_6]
 id = 7
