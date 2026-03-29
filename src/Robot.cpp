@@ -1246,6 +1246,7 @@ void yandy::Robot::handleStore() {
       // retreat_pose = [x, y, z, roll, pitch, yaw]
       double y_offset = sign_y * m_store_retreat_y_m;
       double yaw_offset = sign_y * m_store_retreat_yaw_m;
+      double roll_offset = sign_y * m_store_retreat_roll_m;
 
       Eigen::Isometry3d retreat_offset = Eigen::Isometry3d::Identity();
       retreat_offset.translate(Eigen::Vector3d(
@@ -1253,14 +1254,14 @@ void yandy::Robot::handleStore() {
       retreat_offset.rotate(
           Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
           Eigen::AngleAxisd(m_store_retreat_pitch_m, Eigen::Vector3d::UnitY()) *
-          Eigen::AngleAxisd(m_store_retreat_roll_m, Eigen::Vector3d::UnitX()));
+          Eigen::AngleAxisd(roll_offset, Eigen::Vector3d::UnitX()));
 
       Eigen::Isometry3d retreat_target = sp * retreat_offset;
 
       m_logger->info("Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
                      retreat_target.translation().x(), retreat_target.translation().y(), retreat_target.translation().z(),
                      m_store_retreat_x_m, y_offset, m_store_retreat_z_m,
-                     m_store_retreat_roll_m, m_store_retreat_pitch_m, yaw_offset, sign_y);
+                     roll_offset, m_store_retreat_pitch_m, yaw_offset, sign_y);
 
       // 使用 6DoF IK 直接求解到 retreat_target
       if (!solveAndPlan(retreat_target)) {
@@ -1293,6 +1294,7 @@ void yandy::Robot::handleStore() {
       // prefetch_pose = [x, y, z, roll, pitch, yaw]
       double y_offset = sign_y * m_retrieve_prefetch_y_m;
       double yaw_offset = sign_y * m_retrieve_prefetch_yaw_m;
+      double roll_offset = sign_y * m_retrieve_prefetch_roll_m;
 
       Eigen::Isometry3d prefetch_offset = Eigen::Isometry3d::Identity();
       prefetch_offset.translate(Eigen::Vector3d(
@@ -1300,14 +1302,14 @@ void yandy::Robot::handleStore() {
       prefetch_offset.rotate(
           Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
           Eigen::AngleAxisd(m_retrieve_prefetch_pitch_m, Eigen::Vector3d::UnitY()) *
-          Eigen::AngleAxisd(m_retrieve_prefetch_roll_m, Eigen::Vector3d::UnitX()));
+          Eigen::AngleAxisd(roll_offset, Eigen::Vector3d::UnitX()));
 
       Eigen::Isometry3d prefetch_target = sp * prefetch_offset;
 
       m_logger->info("Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
                      prefetch_target.translation().x(), prefetch_target.translation().y(), prefetch_target.translation().z(),
                      m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m,
-                     m_retrieve_prefetch_roll_m, m_retrieve_prefetch_pitch_m, yaw_offset, sign_y);
+                     roll_offset, m_retrieve_prefetch_pitch_m, yaw_offset, sign_y);
 
       // 使用 6DoF IK 直接求解到 prefetch_target
       if (!solveAndPlan(prefetch_target)) {
