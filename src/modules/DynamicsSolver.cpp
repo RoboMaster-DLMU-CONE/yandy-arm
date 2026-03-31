@@ -600,9 +600,11 @@ DynamicsSolver<kFloating>::solveIK5DoF(
     double tol,
     int max_iter)
 {
-    constexpr int MAX_RETRIES = 5;
+    constexpr int MAX_RETRIES = 20; // 增加随机重试次数
     common::VectorArm best_arm_q = arm_q_guess;
     double min_err = 1e9;
+    double best_pos_err = 1e9;
+    double best_ori_err = 1e9;
 
     const Eigen::Vector3d z_des = approach_direction.normalized();
 
@@ -614,12 +616,12 @@ DynamicsSolver<kFloating>::solveIK5DoF(
     Eigen::Matrix<double, common::ARM_JOINT_NUM, 1> g;
     Eigen::Matrix<double, 5, 1> err_5dof;
 
-    // 构造与 z_des 垂直的正交基 {e1, e2} (避免固定取 x,y 时退化)
+    // 构造与 z_des 垂直的正交基 {e1, e2}
     Eigen::Vector3d e1, e2;
-    if (std::abs(z_des[0]) < 0.9) {
-        e1 = (Eigen::Vector3d::UnitX() - z_des[0] * z_des).normalized();
+    if (std::abs(z_des[2]) < 0.9) { // 优先取 Z 轴分量较小的方向
+        e1 = (Eigen::Vector3d::UnitZ() - z_des[2] * z_des).normalized();
     } else {
-        e1 = (Eigen::Vector3d::UnitY() - z_des[1] * z_des).normalized();
+        e1 = (Eigen::Vector3d::UnitX() - z_des[0] * z_des).normalized();
     }
     e2 = z_des.cross(e1);
 
@@ -628,7 +630,7 @@ DynamicsSolver<kFloating>::solveIK5DoF(
             (restart == 0) ? arm_q_guess : generateRandomArmPositions();
         bool collision_detected = false;
 
-        for (int i = 0; i < max_iter; ++i) {
+        for (int i = 0; i < 200; ++i) { // 增加迭代次数
             const Eigen::VectorXd full_q = buildFullQ(arm_q, m_current_gimbal_q);
 
             pinocchio::computeJointJacobians(m_model, m_data, full_q);
@@ -651,6 +653,8 @@ DynamicsSolver<kFloating>::solveIK5DoF(
             if (current_err_norm < min_err) {
                 min_err    = current_err_norm;
                 best_arm_q = arm_q;
+                best_pos_err = pos_err.norm();
+                best_ori_err = ori_cross.norm();
             }
 
             if (current_err_norm < tol) {
@@ -661,18 +665,14 @@ DynamicsSolver<kFloating>::solveIK5DoF(
                 break;
             }
 
-            // WORLD frame Jacobian (6 × nv)
+            // 使用 LOCAL_WORLD_ALIGNED frame Jacobian
             pinocchio::getFrameJacobian(m_model, m_data, m_tcp_frame_id,
-                                        pinocchio::WORLD, m_J_full);
+                                        pinocchio::LOCAL_WORLD_ALIGNED, m_J_full);
 
-            // 提取机械臂列
             for (int j = 0; j < common::ARM_JOINT_NUM; ++j)
                 J_arm.col(j) = m_J_full.col(m_arm_v_idx[j]);
 
-            // 构建 5DoF Jacobian
-            J_5dof.topRows<3>() = J_arm.topRows<3>();  // 位置行
-
-            // 方向行: d(err[3:4])/dq 由链式法则推导
+            J_5dof.topRows<3>() = J_arm.topRows<3>();
             const Eigen::Matrix<double, 3, common::ARM_JOINT_NUM> J_ang =
                 J_arm.bottomRows<3>();
 
@@ -695,18 +695,20 @@ DynamicsSolver<kFloating>::solveIK5DoF(
             J_5dof.row(3) = e1.transpose() * dcross_dq;
             J_5dof.row(4) = e2.transpose() * dcross_dq;
 
-            // 自适应阻尼 DLS
-            constexpr double base_lambda = 1e-3;
-            const double adaptive_lambda = base_lambda + 0.05 * current_err_norm;
+            // 减小阻尼，提高收敛精度
+            constexpr double base_lambda = 1e-4;
+            const double adaptive_lambda = base_lambda + 0.01 * current_err_norm;
             const double lambda_sq       = adaptive_lambda * adaptive_lambda;
 
             H = J_5dof.transpose() * J_5dof;
             H.diagonal().array() += lambda_sq;
             g = J_5dof.transpose() * err_5dof;
 
-            // 零空间次要目标: 最小化与 q_guess 的偏差
-            constexpr double null_space_weight = 0.01;
-            g += null_space_weight * (arm_q_guess - arm_q);
+            // 只有在误差较小时才启用零空间目标，且权重降低
+            if (current_err_norm < 0.1) {
+                constexpr double null_space_weight = 0.001;
+                g += null_space_weight * (arm_q_guess - arm_q);
+            }
 
             v_arm = H.ldlt().solve(g);
 
@@ -723,7 +725,7 @@ DynamicsSolver<kFloating>::solveIK5DoF(
             }
         }
 
-        if (constexpr double loose_tol = 1e-2;
+        if (constexpr double loose_tol = 5e-3;
             restart == 0 && min_err < loose_tol && !collision_detected) {
             const Eigen::VectorXd best_full_q = buildFullQ(best_arm_q, m_current_gimbal_q);
             if (!pinocchio::computeCollisions(
@@ -737,10 +739,20 @@ DynamicsSolver<kFloating>::solveIK5DoF(
     const Eigen::VectorXd best_full_q_diag = buildFullQ(best_arm_q, m_current_gimbal_q);
     const bool final_collision = pinocchio::computeCollisions(
         m_model, m_data, m_geom_model, m_geom_data, best_full_q_diag, true);
+    
+    std::string limits_info = "";
+    for (int j = 0; j < common::ARM_JOINT_NUM; ++j) {
+        if (best_arm_q[j] <= m_model.lowerPositionLimit[m_arm_q_idx[j]] + 1e-2) {
+            limits_info += "J" + std::to_string(j+1) + "(min) ";
+        } else if (best_arm_q[j] >= m_model.upperPositionLimit[m_arm_q_idx[j]] - 1e-2) {
+            limits_info += "J" + std::to_string(j+1) + "(max) ";
+        }
+    }
+
     m_logger->warn(
-        "solveIK5DoF failed: min_err={:.4f}, collision={}, "
+        "solveIK5DoF failed: min_err={:.4f} (pos={:.4f}, ori={:.4f}), collision={}, limits=[{}] "
         "target=[{:.3f},{:.3f},{:.3f}], approach=[{:.3f},{:.3f},{:.3f}]",
-        min_err, final_collision,
+        min_err, best_pos_err, best_ori_err, final_collision, limits_info,
         target_position.x(), target_position.y(), target_position.z(),
         approach_direction.x(), approach_direction.y(), approach_direction.z());
     return tl::unexpected(best_arm_q);

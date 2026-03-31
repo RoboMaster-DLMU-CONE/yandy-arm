@@ -165,8 +165,13 @@ private:
   std::chrono::steady_clock::time_point m_store_phase_start{std::chrono::steady_clock::now()};
 
   // ---- 抓取流程状态 ----
-  enum class FetchPhase { Seeking, PreGrasp, Approaching, Extracting, Withdrawing };
+  enum class FetchPhase { Seeking, Planning, PreGrasp, Approaching, Extracting, Withdrawing };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
+
+  // ---- 预规划路径 (Planning 阶段生成) ----
+  std::vector<common::VectorArm> m_planned_approach_path; // 逼近路径 (PreGrasp -> Grasp)
+  std::vector<common::VectorArm> m_planned_extract_path;  // 提取路径 (Grasp -> Extract)
+  size_t m_current_path_idx{0}; // 当前执行到的路径点索引
 
   // ---- 末端负载状态 ----
   bool m_payload_attached{false};         // 是否有负载 (夹爪夹持物体)
@@ -185,6 +190,7 @@ private:
   double m_extract_distance{0.05};     // 提取距离 (m)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
+  Eigen::Isometry3d m_locked_target_pose{Eigen::Isometry3d::Identity()}; // 锁定的目标完整位姿
   Eigen::Vector3d m_locked_target_pos{
       Eigen::Vector3d::Zero()}; // 锁定的目标位置
   Eigen::Vector3d m_locked_approach_dir{
@@ -215,6 +221,7 @@ private:
 
   // 抓取子状态处理
   void handleSeeking();
+  void handlePlanning(); // 新增：预规划阶段
   void handlePreGrasp();
   void handleApproaching();
   void handleExtracting();
@@ -226,7 +233,8 @@ private:
   Eigen::Vector3d computeApproachDirection(double roll, double pitch) const;
   bool solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
                         const Eigen::Vector3d &approach_dir,
-                        bool use5DoF = false);
+                        bool use5DoF = false,
+                        double tol = 0.01);
 
   // 从 YandyControlPack 提取云台状态
   void updateGimbalFromPack(const YandyControlPack &pack);

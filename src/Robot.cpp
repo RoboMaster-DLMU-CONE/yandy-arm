@@ -83,9 +83,10 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
   };
   cb.on_enter_fetch = [this] { resetFetchState(); };
   // 查询夹爪是否已闭合/正在闭合（用于 toggle_gripper 决策）
-  cb.is_claw_closed = [this] { 
-    return m_effector.isClosed() || m_effector.getState() == modules::Effector::State::Closing || 
-           m_effector.getState() == modules::Effector::State::Holding; 
+  cb.is_claw_closed = [this] {
+    return m_effector.isClosed() ||
+           m_effector.getState() == modules::Effector::State::Closing ||
+           m_effector.getState() == modules::Effector::State::Holding;
   };
   m_fsm.setCallbacks(cb);
 
@@ -148,15 +149,20 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
 
           m_sim_unit_pose = Eigen::Isometry3d::Identity();
           m_sim_unit_pose.translate(unit_t);
+          // 修正万向节死锁：使用 XYZ 旋转顺序 (Roll-Pitch-Yaw) 
+          // 或者明确地围绕自身局部坐标系逐步旋转，这里采用外旋XYZ
           m_sim_unit_pose.rotate(
-              Eigen::AngleAxisd(unit_yaw, Eigen::Vector3d::UnitZ()) *
+              Eigen::AngleAxisd(unit_roll, Eigen::Vector3d::UnitX()) *
               Eigen::AngleAxisd(unit_pitch, Eigen::Vector3d::UnitY()) *
-              Eigen::AngleAxisd(unit_roll, Eigen::Vector3d::UnitX()));
+              Eigen::AngleAxisd(unit_yaw, Eigen::Vector3d::UnitZ()));
 
+          Eigen::Vector3d axis_x = m_sim_unit_pose.rotation().col(0);
           m_logger->info("Simulate vision (fixed, base_link): "
                          "t=[{:.3f},{:.3f},{:.3f}] rpy=[{:.3f},{:.3f},{:.3f}]",
                          unit_t.x(), unit_t.y(), unit_t.z(), unit_roll,
                          unit_pitch, unit_yaw);
+          m_logger->info("EnergyUnit Axis (Local X in World): [{:.3f}, {:.3f}, {:.3f}]",
+                         axis_x.x(), axis_x.y(), axis_x.z());
         }
       } else {
         // 随机模式：读取范围参数
@@ -222,12 +228,14 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         store["pause_after_above_s"].value<double>().value_or(
             m_store_pause_after_above_s);
     m_store_wait_before_open_s =
-        store["wait_before_open_s"].value<double>().value_or(m_store_wait_before_open_s);
+        store["wait_before_open_s"].value<double>().value_or(
+            m_store_wait_before_open_s);
     m_store_wait_after_open_s =
         store["wait_after_open_s"].value<double>().value_or(
             m_store_wait_after_open_s);
     m_store_wait_after_close_s =
-        store["wait_after_close_s"].value<double>().value_or(m_store_wait_after_close_s);
+        store["wait_after_close_s"].value<double>().value_or(
+            m_store_wait_after_close_s);
     m_store_extra_z_above_store_m =
         store["extra_z_above_store_m"].value<double>().value_or(
             m_store_extra_z_above_store_m);
@@ -235,31 +243,51 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         store["retreat_distance_m"].value<double>().value_or(
             m_store_retreat_distance_m);
     // retreat pose (存矿退回位姿)
-    m_store_retreat_x_m = store["retreat_x_m"].value<double>().value_or(m_store_retreat_x_m);
-    m_store_retreat_y_m = store["retreat_y_m"].value<double>().value_or(m_store_retreat_y_m);
-    m_store_retreat_z_m = store["retreat_z_m"].value<double>().value_or(m_store_retreat_z_m);
-    m_store_retreat_roll_m = store["retreat_roll_m"].value<double>().value_or(m_store_retreat_roll_m);
-    m_store_retreat_pitch_m = store["retreat_pitch_m"].value<double>().value_or(m_store_retreat_pitch_m);
-    m_store_retreat_yaw_m = store["retreat_yaw_m"].value<double>().value_or(m_store_retreat_yaw_m);
+    m_store_retreat_x_m =
+        store["retreat_x_m"].value<double>().value_or(m_store_retreat_x_m);
+    m_store_retreat_y_m =
+        store["retreat_y_m"].value<double>().value_or(m_store_retreat_y_m);
+    m_store_retreat_z_m =
+        store["retreat_z_m"].value<double>().value_or(m_store_retreat_z_m);
+    m_store_retreat_roll_m = store["retreat_roll_m"].value<double>().value_or(
+        m_store_retreat_roll_m);
+    m_store_retreat_pitch_m = store["retreat_pitch_m"].value<double>().value_or(
+        m_store_retreat_pitch_m);
+    m_store_retreat_yaw_m =
+        store["retreat_yaw_m"].value<double>().value_or(m_store_retreat_yaw_m);
     // prefetch pose (取矿预抓取位姿)
-    m_retrieve_prefetch_x_m = store["prefetch_x_m"].value<double>().value_or(m_retrieve_prefetch_x_m);
-    m_retrieve_prefetch_y_m = store["prefetch_y_m"].value<double>().value_or(m_retrieve_prefetch_y_m);
-    m_retrieve_prefetch_z_m = store["prefetch_z_m"].value<double>().value_or(m_retrieve_prefetch_z_m);
-    m_retrieve_prefetch_roll_m = store["prefetch_roll_m"].value<double>().value_or(m_retrieve_prefetch_roll_m);
-    m_retrieve_prefetch_pitch_m = store["prefetch_pitch_m"].value<double>().value_or(m_retrieve_prefetch_pitch_m);
-    m_retrieve_prefetch_yaw_m = store["prefetch_yaw_m"].value<double>().value_or(m_retrieve_prefetch_yaw_m);
+    m_retrieve_prefetch_x_m =
+        store["prefetch_x_m"].value<double>().value_or(m_retrieve_prefetch_x_m);
+    m_retrieve_prefetch_y_m =
+        store["prefetch_y_m"].value<double>().value_or(m_retrieve_prefetch_y_m);
+    m_retrieve_prefetch_z_m =
+        store["prefetch_z_m"].value<double>().value_or(m_retrieve_prefetch_z_m);
+    m_retrieve_prefetch_roll_m =
+        store["prefetch_roll_m"].value<double>().value_or(
+            m_retrieve_prefetch_roll_m);
+    m_retrieve_prefetch_pitch_m =
+        store["prefetch_pitch_m"].value<double>().value_or(
+            m_retrieve_prefetch_pitch_m);
+    m_retrieve_prefetch_yaw_m =
+        store["prefetch_yaw_m"].value<double>().value_or(
+            m_retrieve_prefetch_yaw_m);
   }
-  m_logger->info("Store params: approach_offset={:.3f}, "
-                 "pause_after_above_s={:.3f}, wait_before_open_s={:.3f}, wait_after_open_s={:.3f}, "
-                 "wait_after_close_s={:.3f}, extra_z_above_store_m={:.3f}, retreat_distance_m={:.3f}, "
-                 "retreat=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}], "
-                 "prefetch=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
-                 m_store_approach_offset, m_store_pause_after_above_s, m_store_wait_before_open_s, m_store_wait_after_open_s, m_store_wait_after_close_s,
-                 m_store_extra_z_above_store_m, m_store_retreat_distance_m,
-                 m_store_retreat_x_m, m_store_retreat_y_m, m_store_retreat_z_m,
-                 m_store_retreat_roll_m, m_store_retreat_pitch_m, m_store_retreat_yaw_m,
-                 m_retrieve_prefetch_x_m, m_retrieve_prefetch_y_m, m_retrieve_prefetch_z_m,
-                 m_retrieve_prefetch_roll_m, m_retrieve_prefetch_pitch_m, m_retrieve_prefetch_yaw_m);
+  m_logger->info(
+      "Store params: approach_offset={:.3f}, "
+      "pause_after_above_s={:.3f}, wait_before_open_s={:.3f}, "
+      "wait_after_open_s={:.3f}, "
+      "wait_after_close_s={:.3f}, extra_z_above_store_m={:.3f}, "
+      "retreat_distance_m={:.3f}, "
+      "retreat=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}], "
+      "prefetch=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
+      m_store_approach_offset, m_store_pause_after_above_s,
+      m_store_wait_before_open_s, m_store_wait_after_open_s,
+      m_store_wait_after_close_s, m_store_extra_z_above_store_m,
+      m_store_retreat_distance_m, m_store_retreat_x_m, m_store_retreat_y_m,
+      m_store_retreat_z_m, m_store_retreat_roll_m, m_store_retreat_pitch_m,
+      m_store_retreat_yaw_m, m_retrieve_prefetch_x_m, m_retrieve_prefetch_y_m,
+      m_retrieve_prefetch_z_m, m_retrieve_prefetch_roll_m,
+      m_retrieve_prefetch_pitch_m, m_retrieve_prefetch_yaw_m);
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -534,9 +562,10 @@ void yandy::Robot::generateRandomUnitPose() {
 
   m_sim_unit_pose = Eigen::Isometry3d::Identity();
   m_sim_unit_pose.translate(Eigen::Vector3d(x, y, z));
-  m_sim_unit_pose.rotate(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+  // 修正万向节死锁：使用 XYZ 旋转顺序
+  m_sim_unit_pose.rotate(Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()) *
                          Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
-                         Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()));
+                         Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
 
   m_logger->info("Generated random unit pose (base_link): "
                  "t=[{:.3f},{:.3f},{:.3f}] rp=[{:.3f},{:.3f}]",
@@ -609,12 +638,14 @@ bool yandy::Robot::solveAndPlan(const Eigen::Isometry3d &target_pose) {
 
   // 调试日志：打印 IK 解
   {
-    auto ee_pose = withSolver([](auto& s) { return s.getEndEffectorPose(); });
+    auto ee_pose = withSolver([](auto &s) { return s.getEndEffectorPose(); });
     Eigen::Vector3d rpy_ee = ee_pose.rotation().eulerAngles(2, 1, 0);
-    m_logger->debug("[Manual] IK sol: j1={:.2f} j2={:.2f} j3={:.2f} j4={:.2f} j5={:.2f} j6={:.2f}, EE RPY (deg): {:.1f} {:.1f} {:.1f}",
-                    q_goal[0] * 180 / M_PI, q_goal[1] * 180 / M_PI, q_goal[2] * 180 / M_PI,
-                    q_goal[3] * 180 / M_PI, q_goal[4] * 180 / M_PI, q_goal[5] * 180 / M_PI,
-                    rpy_ee[0] * 180 / M_PI, rpy_ee[1] * 180 / M_PI, rpy_ee[2] * 180 / M_PI);
+    m_logger->debug(
+        "[Manual] IK sol: j1={:.2f} j2={:.2f} j3={:.2f} j4={:.2f} j5={:.2f} "
+        "j6={:.2f}, EE RPY (deg): {:.1f} {:.1f} {:.1f}",
+        q_goal[0] * 180 / M_PI, q_goal[1] * 180 / M_PI, q_goal[2] * 180 / M_PI,
+        q_goal[3] * 180 / M_PI, q_goal[4] * 180 / M_PI, q_goal[5] * 180 / M_PI,
+        rpy_ee[0] * 180 / M_PI, rpy_ee[1] * 180 / M_PI, rpy_ee[2] * 180 / M_PI);
   }
 
   // 路径碰撞检测 (使用当前云台状态)
@@ -663,19 +694,20 @@ void yandy::Robot::handleManual() {
     Eigen::Vector3d rpy_curr =
         R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
     const double roll_keep = rpy_curr[2];
-    
+
     // 从四元数中提取 RPY，替换 roll 后重新构造四元数
     Eigen::Quaterniond q_in(pack.ee_qw, pack.ee_qx, pack.ee_qy, pack.ee_qz);
     Eigen::Vector3d rpy_in = q_in.toRotationMatrix().eulerAngles(2, 1, 0);
-    
-    Eigen::Quaterniond q_new = Eigen::AngleAxisd(rpy_in[0], Eigen::Vector3d::UnitZ()) *
-                               Eigen::AngleAxisd(rpy_in[1], Eigen::Vector3d::UnitY()) *
-                               Eigen::AngleAxisd(roll_keep, Eigen::Vector3d::UnitX());
+
+    Eigen::Quaterniond q_new =
+        Eigen::AngleAxisd(rpy_in[0], Eigen::Vector3d::UnitZ()) *
+        Eigen::AngleAxisd(rpy_in[1], Eigen::Vector3d::UnitY()) *
+        Eigen::AngleAxisd(roll_keep, Eigen::Vector3d::UnitX());
     pack.ee_qw = static_cast<float>(q_new.w());
     pack.ee_qx = static_cast<float>(q_new.x());
     pack.ee_qy = static_cast<float>(q_new.y());
     pack.ee_qz = static_cast<float>(q_new.z());
-    
+
     // 仅在首次手动目标中应用限制
     m_limit_return_roll = false;
   }
@@ -692,9 +724,10 @@ void yandy::Robot::handleManual() {
   // 调试日志：打印目标位姿的 RPY 值
   Eigen::Vector3d rpy_target = target.rotation().eulerAngles(2, 1, 0);
   float x = pack.x, y = pack.y, z = pack.z;
-  m_logger->debug("[Manual] Input XYZ: {:.3f} {:.3f} {:.3f}, RPY (deg): {:.1f} {:.1f} {:.1f}",
-                  x, y, z,
-                  rpy_target[0] * 180 / M_PI, rpy_target[1] * 180 / M_PI, rpy_target[2] * 180 / M_PI);
+  m_logger->debug("[Manual] Input XYZ: {:.3f} {:.3f} {:.3f}, RPY (deg): {:.1f} "
+                  "{:.1f} {:.1f}",
+                  x, y, z, rpy_target[0] * 180 / M_PI,
+                  rpy_target[1] * 180 / M_PI, rpy_target[2] * 180 / M_PI);
 
   solveAndPlan(target);
 }
@@ -704,6 +737,9 @@ void yandy::Robot::handleFetching() {
   switch (m_fetch_phase) {
   case FetchPhase::Seeking:
     handleSeeking();
+    break;
+  case FetchPhase::Planning:
+    handlePlanning();
     break;
   case FetchPhase::PreGrasp:
     handlePreGrasp();
@@ -764,19 +800,21 @@ void yandy::Robot::handleSeeking() {
   if (isPoseStable()) {
     // 锁定目标（一旦锁定，后续不再改变）
     m_locked_target_pos = target_pose.translation();
+    m_locked_target_pose = target_pose; // 存储完整位姿供 Planning 使用
 
     // 视觉位姿的坐标系定义（PnP 解算结果）：
-    //   - Z 轴：垂直于能量单元顶面（瓶口方向）
-    //   - X/Y 轴：在顶面平面内
+    //   - X 轴：圆柱体中轴线 (能量单元高度方向)
+    //   - Y/Z 轴：在顶面/底面平面内 (径向)
     //
     // 夹爪抓取策略：
-    //   - 逼近方向 (approach_dir): 固定为 base_link 的 +X
-    //   轴方向（从机器人往目标逼近）
-    //   - 提取方向 (extract_dir): 瓶口反方向（-Z 轴），瓶口朝上就向下提
+    //   - 逼近方向 (approach_dir): 依赖于目标的 YZ 平面采样 (由 handlePlanning
+    //   完成)
+    //   - 提取方向 (extract_dir): 默认沿 -X 轴 (假设瓶口在 -X 且垂直向上时)
     m_locked_approach_dir =
-        Eigen::Vector3d::UnitX(); // +X 轴 = 从机器人往目标逼近
-    m_locked_extract_dir = -target_pose.rotation().col(2); // -Z 轴 = 瓶口反方向
-    m_locked_target_valid = true;                          // 标记已锁定
+        target_pose.rotation().col(1); // 临时，由 Planning 覆盖
+    m_locked_extract_dir =
+        -target_pose.rotation().col(0); // -X 轴 = 瓶口反方向 (假设瓶口在 -X)
+    m_locked_target_valid = true;       // 标记已锁定
 
     m_current_standoff = m_pregrasp_distance;
     m_pose_history.clear();
@@ -785,25 +823,19 @@ void yandy::Robot::handleSeeking() {
     m_logger->info("Target position: [{:.3f}, {:.3f}, {:.3f}]",
                    m_locked_target_pos.x(), m_locked_target_pos.y(),
                    m_locked_target_pos.z());
-    m_logger->info("Approach direction (+X): [{:.3f}, {:.3f}, {:.3f}]",
-                   m_locked_approach_dir.x(), m_locked_approach_dir.y(),
-                   m_locked_approach_dir.z());
-    m_logger->info(
-        "Extract direction (-Z, opposite to bottle): [{:.3f}, {:.3f}, {:.3f}]",
-        m_locked_extract_dir.x(), m_locked_extract_dir.y(),
-        m_locked_extract_dir.z());
 
-    // 切换到 PreGrasp 阶段
-    m_fetch_phase = FetchPhase::PreGrasp;
+    // 切换到 Planning 阶段
+    m_fetch_phase = FetchPhase::Planning;
+    m_ompl_pending = false; // 清除寻找不稳定目标时的 OMPL 挂起状态
   } else {
-    // 尚未稳定：移动到历史平均位置上方，使用竖直向上方向
+    // 尚未稳定：移动到历史平均位置前方，使用水平逼近方向 (避免插地)
     Eigen::Vector3d mean_pos = Eigen::Vector3d::Zero();
     for (const auto &p : m_pose_history) {
       mean_pos += p.translation();
     }
     mean_pos /= static_cast<double>(m_pose_history.size());
 
-    const Eigen::Vector3d approach_dir = Eigen::Vector3d::UnitZ();
+    const Eigen::Vector3d approach_dir = Eigen::Vector3d::UnitX();
     const Eigen::Vector3d pregrasp_pos =
         mean_pos - approach_dir * m_pregrasp_distance;
 
@@ -811,22 +843,156 @@ void yandy::Robot::handleSeeking() {
   }
 }
 
+void yandy::Robot::handlePlanning() {
+  m_logger->info("Entering Planning phase (Dense Sampling & Fallback)...");
+
+  // 视觉位姿中，X 轴为圆柱体高度方向 (轴向)
+  Eigen::Vector3d axis = m_locked_target_pose.rotation().col(0);
+  Eigen::Vector3d side1 = m_locked_target_pose.rotation().col(1); // Y 轴
+  Eigen::Vector3d side2 = m_locked_target_pose.rotation().col(2); // Z 轴
+
+  std::vector<Eigen::Vector3d> raw_dirs;
+  // 采样策略优化：
+  // 1. 水平环绕增加到 24 个点 (每 15 度)
+  // 2. 俯仰扩展到 +/- 30 度 (每 10 度一个点，共 7 个点)
+  for (int angle = 0; angle < 360; angle += 15) {
+    double rad = angle * M_PI / 180.0;
+    Eigen::Vector3d horizontal_dir =
+        side1 * std::cos(rad) + side2 * std::sin(rad);
+
+    for (double pitch_deg : {-30.0, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0}) {
+      double pitch_rad = pitch_deg * M_PI / 180.0;
+      Eigen::Vector3d dir =
+          horizontal_dir * std::cos(pitch_rad) + axis * std::sin(pitch_rad);
+      raw_dirs.push_back(dir.normalized());
+    }
+  }
+
+  std::vector<Eigen::Vector3d> candidate_dirs;
+  // 过滤：严格屏蔽背面逼近！
+  // 只允许从面朝机器人的一侧 (即 base_link 下 X > 0.2) 逼近
+  // 这保证了预抓取点一定在瓶子和机器人之间，绝不会绕到后面去
+  for (const auto &dir : raw_dirs) {
+    if (dir.x() > 0.2) { 
+      candidate_dirs.push_back(dir);
+    }
+  }
+
+  if (candidate_dirs.empty()) {
+      m_logger->error("--- No candidate directions in the front 180-degree arc! Adjusting bottle position?");
+      // 紧急回退：如果正面全军覆没，尝试放宽到 X > 0
+      for (const auto &dir : raw_dirs) {
+          if (dir.x() > 0.0) candidate_dirs.push_back(dir);
+      }
+  }
+
+  // 排序：仅考虑最靠近机器人正前方 (+X) 的方向。
+  // 因为圆柱体瓶身是轴对称的（无论它绕着自己的红轴怎么转，四周都可以抓），
+  // 所以我们完全忽略它的局部 Y/Z 轴指向，永远选择对机器人来说“最顺手”的正面方向。
+  std::sort(candidate_dirs.begin(), candidate_dirs.end(),
+            [](const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
+              return a.x() > b.x();
+            });
+
+  bool plan_success = false;
+  common::VectorArm best_q_pregrasp;
+
+  for (size_t i = 0; i < candidate_dirs.size(); ++i) {
+    Eigen::Vector3d test_approach_dir = candidate_dirs[i];
+    common::VectorArm q_guess = m_arm_state.q;
+
+    // 检查 PreGrasp 点 (IK)
+    Eigen::Vector3d pregrasp_pos =
+        m_locked_target_pos - test_approach_dir * m_pregrasp_distance;
+    auto q_sol = withSolver([&](auto &s) {
+      return s.solveIK5DoF(pregrasp_pos, test_approach_dir, q_guess,
+                           0.08); // 统一大容差
+    });
+
+    if (!q_sol) continue;
+
+    q_guess = q_sol.value();
+
+    // 简单校验路径中间点 (不要求非常精确)
+    bool path_valid = true;
+    for (double s_dist : {0.5, 1.0}) {
+      Eigen::Vector3d pos =
+          m_locked_target_pos -
+          test_approach_dir * (m_pregrasp_distance * (1.0 - s_dist));
+      auto q_path_sol = withSolver([&](auto &s) {
+        return s.solveIK5DoF(pos, test_approach_dir, q_guess, 0.1);
+      });
+      if (!q_path_sol || withSolver([&](auto &s) {
+            return s.checkPathCollision(q_guess, q_path_sol.value());
+          })) {
+        path_valid = false;
+        break;
+      }
+      q_guess = q_path_sol.value();
+    }
+
+    if (path_valid) {
+      m_locked_approach_dir = test_approach_dir;
+      best_q_pregrasp = q_sol.value();
+      plan_success = true;
+      m_logger->info("+++ Found optimal FRONT-FACING direction: x_score={:.3f}", test_approach_dir.x());
+      break; 
+    }
+  }
+
+  if (!plan_success) {
+    m_logger->warn("--- No perfect front-facing direction, attempting fallback with loose tolerance...");
+    for (const auto &dir : candidate_dirs) {
+      Eigen::Vector3d pos = m_locked_target_pos - dir * m_pregrasp_distance;
+      auto q_sol = withSolver([&](auto &s) {
+        return s.solveIK5DoF(pos, dir, m_arm_state.q, 0.15);
+      });
+      if (q_sol) {
+        m_locked_approach_dir = dir;
+        best_q_pregrasp = q_sol.value();
+        plan_success = true;
+        m_logger->info("+++ Fallback success (Front-facing, tol=0.15)");
+        break;
+      }
+    }
+  }
+
+  if (plan_success) {
+    m_logger->info("+++ Selected direction: [{:.3f},{:.3f},{:.3f}]",
+                   m_locked_approach_dir.x(), m_locked_approach_dir.y(),
+                   m_locked_approach_dir.z());
+
+    // 计算提取方向：严格按照能量单元的主轴方向 (瓶口 -> 瓶底)
+    // 假设视觉解算中，Local +X 就是从瓶口指向瓶底的方向
+    // 如果你在测试中发现方向反了（变成了瓶底->瓶口），只需将这里的 axis 改为 -axis 即可
+    m_locked_extract_dir = axis;
+
+    m_planner->brake();
+    m_planner->requestPlan(m_arm_state.q, best_q_pregrasp);
+    m_ompl_pending = true;
+    m_fetch_phase = FetchPhase::PreGrasp;
+  } else {
+    m_logger->error(
+        "--- Absolutely no valid approach directions found! Aborting.");
+    resetFetchState();
+    m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_FETCH);
+  }
+}
+
 void yandy::Robot::handlePreGrasp() {
-  // 移动到预抓取点（位姿已锁定，不再改变）
   const Eigen::Vector3d pregrasp_pos =
       m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
 
-  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir)) {
-    // IK 或规划失败，保持当前位置继续尝试
+  // 使用较大的容差 (0.08) 来执行
+  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir, true, 0.08)) {
     return;
   }
 
-  // 检查是否到达预抓取点
   const Eigen::Vector3d ee_pos =
       withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
   const double dist = (ee_pos - pregrasp_pos).norm();
 
-  if (dist < 0.01 && m_planner->isFinished()) { // 10mm 阈值 + 轨迹完成
+  if (dist < 0.05 && m_planner->isFinished()) {
     m_logger->info("Reached pre-grasp point, distance: {:.3f}m", dist);
     m_fetch_phase = FetchPhase::Approaching;
   }
@@ -925,10 +1091,11 @@ void yandy::Robot::resetFetchState() {
   m_current_standoff = m_pregrasp_distance;
   m_current_extract_offset = 0.0;
   m_locked_target_pos.setZero();
-  m_locked_approach_dir =
-      Eigen::Vector3d::UnitX(); // +X 轴 = 从机器人往目标逼近
-  m_locked_extract_dir = -Eigen::Vector3d::UnitZ(); // -Z 轴 = 默认向下
-  m_locked_target_valid = false;                    // 清除锁定标志
+  m_locked_approach_dir = Eigen::Vector3d::UnitX();
+  m_locked_extract_dir = Eigen::Vector3d::UnitZ(); // 默认向上
+  m_locked_target_valid = false;
+  m_ompl_pending = false;
+  m_ompl_executing = false;
 }
 
 void yandy::Robot::updatePayloadMass() {
@@ -938,7 +1105,7 @@ void yandy::Robot::updatePayloadMass() {
   // 调试日志：每 100 帧打印一次当前状态
   static int log_counter = 0;
   if (++log_counter % 100 == 0) {
-    m_logger->debug("Claw state: is_holding={}, payload_attached={}", 
+    m_logger->debug("Claw state: is_holding={}, payload_attached={}",
                     is_holding, m_payload_attached);
   }
 
@@ -946,17 +1113,14 @@ void yandy::Robot::updatePayloadMass() {
   if (is_holding && !m_payload_attached) {
     // 夹爪夹持物体，附加 600g 负载
     m_logger->warn(">>> Claw CLOSED, adding payload compensation...");
-    withSolver([&](auto &s) {
-      s.setEndEffectorMass(PAYLOAD_MASS);
-    });
+    withSolver([&](auto &s) { s.setEndEffectorMass(PAYLOAD_MASS); });
     m_payload_attached = true;
-    m_logger->info("Payload attached: +{:.1f}g (claw holding)", PAYLOAD_MASS * 1000);
+    m_logger->info("Payload attached: +{:.1f}g (claw holding)",
+                   PAYLOAD_MASS * 1000);
   } else if (!is_holding && m_payload_attached) {
     // 夹爪张开，移除负载
     m_logger->warn(">>> Claw OPENED, removing payload compensation...");
-    withSolver([&](auto &s) {
-      s.setEndEffectorMass(0.0);
-    });
+    withSolver([&](auto &s) { s.setEndEffectorMass(0.0); });
     m_payload_attached = false;
     m_logger->info("Payload removed: 0g (claw open)");
   }
@@ -981,23 +1145,19 @@ bool yandy::Robot::isPoseStable() const {
   }
   pos_variance /= static_cast<double>(m_pose_history.size());
 
-  // 计算方向稳定性：检查 Z 轴（逼近方向）的方差
-  // 使用单位四元数的角度差来衡量方向变化
+  // 计算方向稳定性：检查 X 轴（能量单元主轴方向）的方差
   double orient_variance = 0.0;
-  Eigen::Quaterniond mean_q = Eigen::Quaterniond::Identity();
 
-  // 简单方法：检查各帧 Z 轴方向的一致性
-  Eigen::Vector3d mean_z = Eigen::Vector3d::Zero();
+  // 计算 X 轴方向的一致性
+  Eigen::Vector3d mean_x = Eigen::Vector3d::Zero();
   for (const auto &p : m_pose_history) {
-    mean_z += p.rotation().col(2); // Z 轴
+    mean_x += p.rotation().col(0); // X 轴
   }
-  mean_z.normalize();
+  mean_x.normalize();
 
   for (const auto &p : m_pose_history) {
-    const Eigen::Vector3d z_axis = p.rotation().col(2).normalized();
-    // 计算与平均方向的夹角余弦值
-    const double cos_theta = mean_z.dot(z_axis);
-    // 角度差（弧度），cos=1 表示同向，cos=0 表示垂直
+    const Eigen::Vector3d x_axis = p.rotation().col(0).normalized();
+    const double cos_theta = mean_x.dot(x_axis);
     orient_variance += std::acos(std::max(-1.0, std::min(1.0, cos_theta)));
   }
   orient_variance /= static_cast<double>(m_pose_history.size());
@@ -1022,34 +1182,42 @@ Eigen::Vector3d yandy::Robot::computeApproachDirection(double roll,
 
 bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
                                     const Eigen::Vector3d &approach_dir,
-                                    bool use5DoF) {
+                                    bool use5DoF,
+                                    double tol) {
   // 从 approach_dir 构造完整 6DoF 目标位姿：
   // 将世界 Z 轴 [0,0,1] 旋转到 approach_dir 的最短旋转，
-  // 但对工具绕 Z 轴的 roll 采用当前末端的 roll 值以避免翻转
+  // 重点：尝试将末端 X 轴（夹爪手指方向）对齐到能量单元的主轴 (Bottle X)
   const Eigen::Vector3d z_des = approach_dir.normalized();
+  const Eigen::Vector3d bottle_axis = m_locked_target_pose.rotation().col(0);
 
-  // 获取当前末端的 roll（使用 Z-Y-X Euler: [yaw, pitch, roll]）
-  Eigen::Matrix3d R_curr =
-      withSolver([](auto &s) { return s.getEndEffectorPose().rotation(); });
-  Eigen::Vector3d rpy_curr = R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
-  const double roll_keep = rpy_curr[2];
-
-  // 构建一个以 z_des 为 Z 轴、并以 roll_keep 绕 Z 轴旋转的坐标系
-  Eigen::Vector3d ref = Eigen::Vector3d::UnitX();
-  if (std::abs(ref.dot(z_des)) > 0.99)
-    ref = Eigen::Vector3d::UnitY();
-  Eigen::Vector3d base_x = (ref - z_des * (ref.dot(z_des))).normalized();
-  Eigen::Vector3d base_y = z_des.cross(base_x).normalized();
-
-  const double c = std::cos(roll_keep);
-  const double s = std::sin(roll_keep);
-  Eigen::Vector3d x_rot = c * base_x + s * base_y; // X 轴经 roll 旋转后方向
-  Eigen::Vector3d y_rot = z_des.cross(x_rot).normalized();
-
+  // 计算理想的 X 轴方向：BottleX 在与 z_des 垂直平面上的投影
+  Eigen::Vector3d x_des = (bottle_axis - z_des * (bottle_axis.dot(z_des))).normalized();
   Eigen::Matrix3d R_des;
-  R_des.col(0) = x_rot;
-  R_des.col(1) = y_rot;
-  R_des.col(2) = z_des;
+
+  if (x_des.norm() < 0.1) {
+    // 如果 bottle_axis 与逼近方向几乎平行（即从瓶口/瓶底逼近），退化到使用当前末端 roll
+    Eigen::Matrix3d R_curr =
+        withSolver([](auto &s) { return s.getEndEffectorPose().rotation(); });
+    Eigen::Vector3d rpy_curr = R_curr.eulerAngles(2, 1, 0); // [yaw, pitch, roll]
+    const double roll_keep = rpy_curr[2];
+
+    Eigen::Vector3d ref = Eigen::Vector3d::UnitX();
+    if (std::abs(ref.dot(z_des)) > 0.99)
+      ref = Eigen::Vector3d::UnitY();
+    Eigen::Vector3d base_x = (ref - z_des * (ref.dot(z_des))).normalized();
+    Eigen::Vector3d base_y = z_des.cross(base_x).normalized();
+
+    const double c = std::cos(roll_keep);
+    const double s = std::sin(roll_keep);
+    R_des.col(0) = c * base_x + s * base_y;
+    R_des.col(1) = z_des.cross(R_des.col(0)).normalized();
+    R_des.col(2) = z_des;
+  } else {
+    // 成功对齐手指方向
+    R_des.col(0) = x_des;
+    R_des.col(1) = z_des.cross(x_des).normalized();
+    R_des.col(2) = z_des;
+  }
 
   m_target_pose = Eigen::Isometry3d::Identity();
   m_target_pose.translate(target_pos);
@@ -1076,11 +1244,11 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   // 优先尝试 6DoF IK；若失败或显式要求 5DoF，则尝试 5DoF IK（约束位置 +
   // 方向，绕轴自由旋转）
   auto q_sol = withSolver(
-      [&](auto &s) { return s.solveIK(m_target_pose, m_arm_state.q, 0.01); });
+      [&](auto &s) { return s.solveIK(m_target_pose, m_arm_state.q, tol); });
   if (!q_sol || use5DoF) {
     // 尝试使用 5DoF IK（位置 + 方向约束，绕方向轴自由旋转）
     auto q5_sol = withSolver([&](auto &s) {
-      return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, 0.01);
+      return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, tol);
     });
     if (q5_sol) {
       q_sol = q5_sol;
@@ -1092,9 +1260,9 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
     if (++ik_fail_count % 100 == 1) {
       m_logger->warn(
           "IK (6DoF/5DoF) failed for target [{:.3f}, {:.3f}, {:.3f}], "
-          "approach [{:.3f}, {:.3f}, {:.3f}]",
+          "approach [{:.3f}, {:.3f}, {:.3f}] (tol={:.3f})",
           target_pos.x(), target_pos.y(), target_pos.z(), approach_dir.x(),
-          approach_dir.y(), approach_dir.z());
+          approach_dir.y(), approach_dir.z(), tol);
     }
     m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
     m_arm_hw.write(m_arm_cmd);
@@ -1215,10 +1383,15 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::OpenWait: {
       // 等待一段时间（非阻塞）再打开夹爪
-      if (!solveAndPlan(sp)) return;
-      const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_store_phase_start).count();
+      if (!solveAndPlan(sp))
+        return;
+      const auto elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        m_store_phase_start)
+              .count();
       if (elapsed >= m_store_wait_before_open_s) {
-        m_logger->info("Store: pre-open wait complete ({:.3f}s), opening claw", elapsed);
+        m_logger->info("Store: pre-open wait complete ({:.3f}s), opening claw",
+                       elapsed);
         m_effector.openClaw();
         // 进入开爪后的等待阶段
         m_store_phase = StorePhase::PostOpenLift; // repurposed as PostOpenWait
@@ -1228,10 +1401,16 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::PostOpenLift: {
       // 开爪后等待一段时间（非阻塞），然后退回
-      if (!solveAndPlan(sp)) return;
-      const auto elapsed_post = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_store_phase_start).count();
+      if (!solveAndPlan(sp))
+        return;
+      const auto elapsed_post =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        m_store_phase_start)
+              .count();
       if (elapsed_post >= m_store_wait_after_open_s) {
-        m_logger->info("Store: post-open wait complete ({:.3f}s), starting retreat", elapsed_post);
+        m_logger->info(
+            "Store: post-open wait complete ({:.3f}s), starting retreat",
+            elapsed_post);
         m_store_phase = StorePhase::Retreating;
         m_store_phase_start = std::chrono::steady_clock::now();
       }
@@ -1239,7 +1418,8 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::Retreating: {
       // 自动根据 store_frame 的 y 值决定镜像：
-      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw
+      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y
+      // 偏移与 yaw
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
 
       // 构建 retreat 位姿：store_frame * transform(retreat_pose)
@@ -1249,8 +1429,8 @@ void yandy::Robot::handleStore() {
       double roll_offset = sign_y * m_store_retreat_roll_m;
 
       Eigen::Isometry3d retreat_offset = Eigen::Isometry3d::Identity();
-      retreat_offset.translate(Eigen::Vector3d(
-          m_store_retreat_x_m, y_offset, m_store_retreat_z_m));
+      retreat_offset.translate(
+          Eigen::Vector3d(m_store_retreat_x_m, y_offset, m_store_retreat_z_m));
       retreat_offset.rotate(
           Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
           Eigen::AngleAxisd(m_store_retreat_pitch_m, Eigen::Vector3d::UnitY()) *
@@ -1258,10 +1438,14 @@ void yandy::Robot::handleStore() {
 
       Eigen::Isometry3d retreat_target = sp * retreat_offset;
 
-      m_logger->info("Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
-                     retreat_target.translation().x(), retreat_target.translation().y(), retreat_target.translation().z(),
-                     m_store_retreat_x_m, y_offset, m_store_retreat_z_m,
-                     roll_offset, m_store_retreat_pitch_m, yaw_offset, sign_y);
+      m_logger->info(
+          "Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, "
+          "z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, "
+          "rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+          retreat_target.translation().x(), retreat_target.translation().y(),
+          retreat_target.translation().z(), m_store_retreat_x_m, y_offset,
+          m_store_retreat_z_m, roll_offset, m_store_retreat_pitch_m, yaw_offset,
+          sign_y);
 
       // 使用 6DoF IK 直接求解到 retreat_target
       if (!solveAndPlan(retreat_target)) {
@@ -1271,8 +1455,10 @@ void yandy::Robot::handleStore() {
           return;
       }
 
-      const Eigen::Vector3d cur = withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
-      if ((cur - retreat_target.translation()).norm() < 0.03 && m_planner->isFinished()) {
+      const Eigen::Vector3d cur = withSolver(
+          [](auto &s) { return s.getEndEffectorPose().translation(); });
+      if ((cur - retreat_target.translation()).norm() < 0.03 &&
+          m_planner->isFinished()) {
         m_logger->info("Store: reposition complete, exiting store mode");
         withSolver([](auto &s) { s.setBaseLinkCollisionEnabled(true); });
         m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_STORE);
@@ -1287,7 +1473,8 @@ void yandy::Robot::handleStore() {
     switch (m_store_phase) {
     case StorePhase::PreFetch: {
       // 自动根据 store_frame 的 y 值决定镜像：
-      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw
+      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y
+      // 偏移与 yaw
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
 
       // 构建 prefetch 位姿：store_frame * transform(prefetch_pose)
@@ -1301,27 +1488,36 @@ void yandy::Robot::handleStore() {
           m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m));
       prefetch_offset.rotate(
           Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
-          Eigen::AngleAxisd(m_retrieve_prefetch_pitch_m, Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(m_retrieve_prefetch_pitch_m,
+                            Eigen::Vector3d::UnitY()) *
           Eigen::AngleAxisd(roll_offset, Eigen::Vector3d::UnitX()));
 
       Eigen::Isometry3d prefetch_target = sp * prefetch_offset;
 
-      m_logger->info("Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
-                     prefetch_target.translation().x(), prefetch_target.translation().y(), prefetch_target.translation().z(),
-                     m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m,
-                     roll_offset, m_retrieve_prefetch_pitch_m, yaw_offset, sign_y);
+      m_logger->info(
+          "Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, "
+          "y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, "
+          "z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+          prefetch_target.translation().x(), prefetch_target.translation().y(),
+          prefetch_target.translation().z(), m_retrieve_prefetch_x_m, y_offset,
+          m_retrieve_prefetch_z_m, roll_offset, m_retrieve_prefetch_pitch_m,
+          yaw_offset, sign_y);
 
       // 使用 6DoF IK 直接求解到 prefetch_target
       if (!solveAndPlan(prefetch_target)) {
         // 作为回退，尝试 5DoF 约束朝向为 -store_frame.Z
         const Eigen::Vector3d approach_dir = -sp.rotation().col(2).normalized();
-        if (!solveAndPlan5DoF(prefetch_target.translation(), approach_dir, true))
+        if (!solveAndPlan5DoF(prefetch_target.translation(), approach_dir,
+                              true))
           return;
       }
 
-      const Eigen::Vector3d cur = withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
-      if ((cur - prefetch_target.translation()).norm() < 0.03 && m_planner->isFinished()) {
-        m_logger->info("Store (retrieve PreFetch): pre-fetch position reached, starting dwell before lowering");
+      const Eigen::Vector3d cur = withSolver(
+          [](auto &s) { return s.getEndEffectorPose().translation(); });
+      if ((cur - prefetch_target.translation()).norm() < 0.03 &&
+          m_planner->isFinished()) {
+        m_logger->info("Store (retrieve PreFetch): pre-fetch position reached, "
+                       "starting dwell before lowering");
         m_store_phase = StorePhase::PausePreFetch;
         m_store_phase_start = std::chrono::steady_clock::now();
         // 保存 prefetch_target 供 PausePreFetch 阶段使用
@@ -1338,9 +1534,9 @@ void yandy::Robot::handleStore() {
                                         m_store_phase_start)
               .count();
       if (elapsed >= m_store_pause_pre_fetch_s) {
-        m_logger->info(
-            "Store (retrieve PreFetch): dwell complete ({:.3f}s), moving to store frame",
-            elapsed);
+        m_logger->info("Store (retrieve PreFetch): dwell complete ({:.3f}s), "
+                       "moving to store frame",
+                       elapsed);
         m_store_phase = StorePhase::AtTarget;
       }
       break;
@@ -1368,10 +1564,14 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::Retracting: {
       // 非阻塞等待闭爪完成（以 m_store_wait_after_close_s 为准）
-      const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_store_phase_start).count();
+      const auto elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        m_store_phase_start)
+              .count();
       if (elapsed < m_store_wait_after_close_s) {
         // 保持当前以上位姿
-        if (!solveAndPlan(above_pose)) return;
+        if (!solveAndPlan(above_pose))
+          return;
         return;
       }
 
@@ -1383,7 +1583,8 @@ void yandy::Robot::handleStore() {
         return;
       const Eigen::Vector3d ee = withSolver(
           [](auto &s) { return s.getEndEffectorPose().translation(); });
-      m_logger->info("Store (retrieve): actual EE pos [{:.3f}, {:.3f}, {:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
+      m_logger->info("Store (retrieve): actual EE pos [{:.3f}, {:.3f}, "
+                     "{:.3f}], error [{:.3f}, {:.3f}, {:.3f}]",
                      ee.x(), ee.y(), ee.z(),
                      ee.x() - above_pose.translation().x(),
                      ee.y() - above_pose.translation().y(),
