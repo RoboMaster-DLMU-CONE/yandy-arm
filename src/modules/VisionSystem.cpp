@@ -47,6 +47,22 @@ namespace yandy::modules
             }
         }
 
+        // 读取相机/解算位姿的旋转补偿 (roll, pitch, yaw)
+        if (auto rpy_node = tbl["camera"]["rotation_offset_rpy"].as_array())
+        {
+            double roll = rpy_node->get(0)->value<double>().value_or(0.0);
+            double pitch = rpy_node->get(1)->value<double>().value_or(0.0);
+            double yaw = rpy_node->get(2)->value<double>().value_or(0.0);
+            
+            // 构建旋转补偿矩阵
+            m_camera_rotation_offset = (
+                Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+                Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+                Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX())
+            ).toRotationMatrix();
+            m_logger->info("Loaded camera rotation offset RPY: [{:.3f}, {:.3f}, {:.3f}]", roll, pitch, yaw);
+        }
+
         float w = 30.0f / 1000.0f; // 30mm -> 0.03m
         float h = 37.5f / 1000.0f; // 37.5mm -> 0.0375m
 
@@ -102,7 +118,9 @@ namespace yandy::modules
 
         // 组装成 Isometry3d (T_camera_object)
         output_pose = Eigen::Isometry3d::Identity();
-        output_pose.linear() = R_eigen;
+        // 应用旋转补偿（乘在左边，表示在相机坐标系下的旋转校正）
+        // 效果：物体在相机视野里"绕某轴旋转"
+        output_pose.linear() = m_camera_rotation_offset * R_eigen;
         output_pose.translation() = t_eigen;
 
         return true;

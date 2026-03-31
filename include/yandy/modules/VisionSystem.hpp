@@ -46,6 +46,9 @@ namespace yandy::modules
         // 3D 物体坐标 (世界坐标系，以能量单元中心为原点)
         std::vector<cv::Point3f> object_points_;
 
+        // 相机安装/位姿解算后的旋转补偿矩阵
+        Eigen::Matrix3d m_camera_rotation_offset{Eigen::Matrix3d::Identity()};
+
         std::shared_ptr<spdlog::logger> m_logger;
     };
 
