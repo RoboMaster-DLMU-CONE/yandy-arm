@@ -1,0 +1,14 @@
+[Unit]
+Description=Yandy-Arm Robot Control System
+After=network.target
+
+[Service]
+Type=simple
+Environment="LD_LIBRARY_PATH=/opt/MVS/lib/64/:@CMAKE_INSTALL_PREFIX@/lib"
+ExecStart=@CMAKE_INSTALL_PREFIX@/bin/yandy_arm
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -27,3 +27,6 @@ if (YANDY_BUILD_SIMULATE)
 endif()
 
 add_subdirectory(scripts)
+
+# 安装与自启动配置
+include(YandyInstall)
