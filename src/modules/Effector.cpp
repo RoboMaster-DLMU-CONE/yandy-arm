@@ -199,16 +199,23 @@ public:
 
 private:
   void performZeroing() {
-    m_logger->info("开始夹爪回零...");
+    m_logger->info("开始夹爪回零 (目标: 张开极限)...");
 
     (void)m_motor.enable();
 
     int stallTimeMs = 0;
     constexpr int kLoopIntervalMs = 2;
 
-    // 往闭合方向施加力矩直到堵转（考虑 dir 方向）
-    m_motor.setPosRef(m_dir * 5.0f);
-    m_motor.setTorRef(m_dir * m_zeroingTorque);
+    // 确定张开方向。
+    // openClaw 的目标是 m_offset - m_dir * m_openPosition
+    // 所以从 m_offset 出发，张开方向就是 -m_dir * m_openPosition 的方向
+    float zeroingDir = (m_openPosition >= 0) ? -m_dir : m_dir;
+
+    m_logger->info("回零运动方向: {}", zeroingDir > 0 ? "正向" : "反向");
+
+    // 往张开方向施加力矩直到堵转
+    m_motor.setPosRef(zeroingDir * 10.0f); // 目标设为一个较大的行程
+    m_motor.setTorRef(zeroingDir * m_zeroingTorque);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
       auto status = m_motor.getStatusPlain();
@@ -223,10 +230,18 @@ private:
     }
 
     auto status = m_motor.getStatusPlain();
-    m_offset = status.reduced_angle_rad; // 零点的实际位置作为 offset
+    float openLimitPos = status.reduced_angle_rad;
 
-    m_logger->info("回零完成, 零点实际位置={:.4f} rad (offset)", m_offset);
-    m_motor.setPosRef(0);
+    // 重新计算 m_offset (闭合零点)。
+    // 根据公式: openLimitPos = m_offset - m_dir * m_openPosition
+    // 推导得: m_offset = openLimitPos + m_dir * m_openPosition
+    m_offset = openLimitPos + m_dir * m_openPosition;
+
+    m_logger->info("回零完成, 张开极限位置={:.4f} rad, 计算出的闭合零点(offset)={:.4f} rad",
+                   openLimitPos, m_offset);
+
+    // 回零后停在当前的张开极限位置，避免突发运动
+    m_motor.setPosRef(openLimitPos);
     m_motor.setTorRef(0);
   }
 
