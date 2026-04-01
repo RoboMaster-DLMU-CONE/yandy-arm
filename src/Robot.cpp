@@ -243,34 +243,27 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         store["retreat_distance_m"].value<double>().value_or(
             m_store_retreat_distance_m);
     // retreat pose (存矿退回位姿)
-    m_store_retreat_x_m =
-        store["retreat_x_m"].value<double>().value_or(m_store_retreat_x_m);
-    m_store_retreat_y_m =
-        store["retreat_y_m"].value<double>().value_or(m_store_retreat_y_m);
-    m_store_retreat_z_m =
-        store["retreat_z_m"].value<double>().value_or(m_store_retreat_z_m);
-    m_store_retreat_roll_m = store["retreat_roll_m"].value<double>().value_or(
-        m_store_retreat_roll_m);
-    m_store_retreat_pitch_m = store["retreat_pitch_m"].value<double>().value_or(
-        m_store_retreat_pitch_m);
-    m_store_retreat_yaw_m =
-        store["retreat_yaw_m"].value<double>().value_or(m_store_retreat_yaw_m);
+    if (auto pos = store["retreat_pos"].as_array()) {
+      m_store_retreat_pos << pos->get(0)->value<double>().value_or(0.0),
+                             pos->get(1)->value<double>().value_or(0.0),
+                             pos->get(2)->value<double>().value_or(0.0);
+    }
+    if (auto rpy = store["retreat_rpy"].as_array()) {
+      m_store_retreat_rpy << rpy->get(0)->value<double>().value_or(0.0),
+                             rpy->get(1)->value<double>().value_or(0.0),
+                             rpy->get(2)->value<double>().value_or(0.0);
+    }
     // prefetch pose (取矿预抓取位姿)
-    m_retrieve_prefetch_x_m =
-        store["prefetch_x_m"].value<double>().value_or(m_retrieve_prefetch_x_m);
-    m_retrieve_prefetch_y_m =
-        store["prefetch_y_m"].value<double>().value_or(m_retrieve_prefetch_y_m);
-    m_retrieve_prefetch_z_m =
-        store["prefetch_z_m"].value<double>().value_or(m_retrieve_prefetch_z_m);
-    m_retrieve_prefetch_roll_m =
-        store["prefetch_roll_m"].value<double>().value_or(
-            m_retrieve_prefetch_roll_m);
-    m_retrieve_prefetch_pitch_m =
-        store["prefetch_pitch_m"].value<double>().value_or(
-            m_retrieve_prefetch_pitch_m);
-    m_retrieve_prefetch_yaw_m =
-        store["prefetch_yaw_m"].value<double>().value_or(
-            m_retrieve_prefetch_yaw_m);
+    if (auto pos = store["prefetch_pos"].as_array()) {
+      m_retrieve_prefetch_pos << pos->get(0)->value<double>().value_or(0.0),
+                                 pos->get(1)->value<double>().value_or(0.0),
+                                 pos->get(2)->value<double>().value_or(0.0);
+    }
+    if (auto rpy = store["prefetch_rpy"].as_array()) {
+      m_retrieve_prefetch_rpy << rpy->get(0)->value<double>().value_or(0.0),
+                                 rpy->get(1)->value<double>().value_or(0.0),
+                                 rpy->get(2)->value<double>().value_or(0.0);
+    }
   }
   m_logger->info(
       "Store params: approach_offset={:.3f}, "
@@ -278,16 +271,16 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
       "wait_after_open_s={:.3f}, "
       "wait_after_close_s={:.3f}, extra_z_above_store_m={:.3f}, "
       "retreat_distance_m={:.3f}, "
-      "retreat=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}], "
-      "prefetch=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
+      "retreat_pos=[{:.3f},{:.3f},{:.3f}], retreat_rpy=[{:.3f},{:.3f},{:.3f}], "
+      "prefetch_pos=[{:.3f},{:.3f},{:.3f}], prefetch_rpy=[{:.3f},{:.3f},{:.3f}]",
       m_store_approach_offset, m_store_pause_after_above_s,
       m_store_wait_before_open_s, m_store_wait_after_open_s,
       m_store_wait_after_close_s, m_store_extra_z_above_store_m,
-      m_store_retreat_distance_m, m_store_retreat_x_m, m_store_retreat_y_m,
-      m_store_retreat_z_m, m_store_retreat_roll_m, m_store_retreat_pitch_m,
-      m_store_retreat_yaw_m, m_retrieve_prefetch_x_m, m_retrieve_prefetch_y_m,
-      m_retrieve_prefetch_z_m, m_retrieve_prefetch_roll_m,
-      m_retrieve_prefetch_pitch_m, m_retrieve_prefetch_yaw_m);
+      m_store_retreat_distance_m, 
+      m_store_retreat_pos.x(), m_store_retreat_pos.y(), m_store_retreat_pos.z(),
+      m_store_retreat_rpy.x(), m_store_retreat_rpy.y(), m_store_retreat_rpy.z(),
+      m_retrieve_prefetch_pos.x(), m_retrieve_prefetch_pos.y(), m_retrieve_prefetch_pos.z(),
+      m_retrieve_prefetch_rpy.x(), m_retrieve_prefetch_rpy.y(), m_retrieve_prefetch_rpy.z());
 }
 
 yandy::Robot::~Robot() { stop(); }
@@ -761,7 +754,7 @@ void yandy::Robot::handleSeeking() {
   if (m_locked_target_valid) {
     const Eigen::Vector3d pregrasp_pos =
         m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
-    solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir);
+    solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir, true, 0.08);
     return;
   }
 
@@ -839,7 +832,7 @@ void yandy::Robot::handleSeeking() {
     const Eigen::Vector3d pregrasp_pos =
         mean_pos - approach_dir * m_pregrasp_distance;
 
-    solveAndPlan5DoF(pregrasp_pos, approach_dir);
+    solveAndPlan5DoF(pregrasp_pos, approach_dir, true, 0.08);
   }
 }
 
@@ -852,15 +845,17 @@ void yandy::Robot::handlePlanning() {
   Eigen::Vector3d side2 = m_locked_target_pose.rotation().col(2); // Z 轴
 
   std::vector<Eigen::Vector3d> raw_dirs;
-  // 采样策略优化：
-  // 1. 水平环绕增加到 24 个点 (每 15 度)
-  // 2. 俯仰扩展到 +/- 30 度 (每 10 度一个点，共 7 个点)
+  // 采样策略优化 (增强版)：
+  // 1. 水平环绕 24 个点 (每 15 度)
+  // 2. 俯仰扩展到 +/- 45 度 (每 10 度一个点，共 10 个点) — 增加陡峭角度
+  // 3. 总计 24 * 10 = 240 个方向
   for (int angle = 0; angle < 360; angle += 15) {
     double rad = angle * M_PI / 180.0;
     Eigen::Vector3d horizontal_dir =
         side1 * std::cos(rad) + side2 * std::sin(rad);
 
-    for (double pitch_deg : {-30.0, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0}) {
+    for (double pitch_deg : {-45.0, -35.0, -25.0, -15.0, -5.0,
+                              5.0,  15.0,  25.0,  35.0, 45.0}) {
       double pitch_rad = pitch_deg * M_PI / 180.0;
       Eigen::Vector3d dir =
           horizontal_dir * std::cos(pitch_rad) + axis * std::sin(pitch_rad);
@@ -869,30 +864,36 @@ void yandy::Robot::handlePlanning() {
   }
 
   std::vector<Eigen::Vector3d> candidate_dirs;
-  // 过滤：严格屏蔽背面逼近！
-  // 只允许从面朝机器人的一侧 (即 base_link 下 X > 0.2) 逼近
-  // 这保证了预抓取点一定在瓶子和机器人之间，绝不会绕到后面去
+  // 两阶段过滤：先用较宽松的阈值筛选，再排序
+  // 第一阶段：x > 0.1 (放宽阈值，捞出更多边缘方向)
   for (const auto &dir : raw_dirs) {
-    if (dir.x() > 0.2) { 
+    if (dir.x() > 0.1) {
       candidate_dirs.push_back(dir);
     }
   }
 
   if (candidate_dirs.empty()) {
-      m_logger->error("--- No candidate directions in the front 180-degree arc! Adjusting bottle position?");
-      // 紧急回退：如果正面全军覆没，尝试放宽到 X > 0
-      for (const auto &dir : raw_dirs) {
-          if (dir.x() > 0.0) candidate_dirs.push_back(dir);
-      }
+    m_logger->warn("--- No directions with x>0.1, relaxing to x>0...");
+    for (const auto &dir : raw_dirs) {
+      if (dir.x() > 0.0) candidate_dirs.push_back(dir);
+    }
   }
 
-  // 排序：仅考虑最靠近机器人正前方 (+X) 的方向。
-  // 因为圆柱体瓶身是轴对称的（无论它绕着自己的红轴怎么转，四周都可以抓），
-  // 所以我们完全忽略它的局部 Y/Z 轴指向，永远选择对机器人来说“最顺手”的正面方向。
+  if (candidate_dirs.empty()) {
+    m_logger->error("--- No candidate directions in the front hemisphere! Check target pose.");
+  }
+
+  // 排序：优先选择正前方 (+X) 的方向
+  // 次优先：Z 分量较大的方向对单向关节 (J2/J3) 更友好
   std::sort(candidate_dirs.begin(), candidate_dirs.end(),
             [](const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
-              return a.x() > b.x();
+              double score_a = a.x() * 1.0 + std::max(0.0, a.z()) * 0.3;
+              double score_b = b.x() * 1.0 + std::max(0.0, b.z()) * 0.3;
+              return score_a > score_b;
             });
+
+  m_logger->debug("Candidate directions: {} (from {} raw)",
+                  candidate_dirs.size(), raw_dirs.size());
 
   bool plan_success = false;
   common::VectorArm best_q_pregrasp;
@@ -901,26 +902,30 @@ void yandy::Robot::handlePlanning() {
     Eigen::Vector3d test_approach_dir = candidate_dirs[i];
     common::VectorArm q_guess = m_arm_state.q;
 
+    // PLANNING TOLERANCE (STRICT) - 规划时使用严苛的容差，为执行留出余量
+    constexpr double PLAN_TOL = 0.06; // 从 0.05 放宽到 0.06，给物理执行留足 buffer 即可
+
     // 检查 PreGrasp 点 (IK)
     Eigen::Vector3d pregrasp_pos =
         m_locked_target_pos - test_approach_dir * m_pregrasp_distance;
     auto q_sol = withSolver([&](auto &s) {
-      return s.solveIK5DoF(pregrasp_pos, test_approach_dir, q_guess,
-                           0.08); // 统一大容差
+      return s.solveIK5DoF(pregrasp_pos, test_approach_dir, q_guess, PLAN_TOL);
     });
 
-    if (!q_sol) continue;
+    if (!q_sol)
+      continue;
 
     q_guess = q_sol.value();
 
-    // 简单校验路径中间点 (不要求非常精确)
+    // 校验路径中间点（含目标点）。
+    // 中间点的容差可以稍微放宽 (0.08)，只要最终能到达 pregrasp 和 extract 点即可
     bool path_valid = true;
     for (double s_dist : {0.5, 1.0}) {
       Eigen::Vector3d pos =
           m_locked_target_pos -
           test_approach_dir * (m_pregrasp_distance * (1.0 - s_dist));
       auto q_path_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(pos, test_approach_dir, q_guess, 0.1);
+        return s.solveIK5DoF(pos, test_approach_dir, q_guess, 0.08);
       });
       if (!q_path_sol || withSolver([&](auto &s) {
             return s.checkPathCollision(q_guess, q_path_sol.value());
@@ -932,26 +937,77 @@ void yandy::Robot::handlePlanning() {
     }
 
     if (path_valid) {
-      m_locked_approach_dir = test_approach_dir;
-      best_q_pregrasp = q_sol.value();
-      plan_success = true;
-      m_logger->info("+++ Found optimal FRONT-FACING direction: x_score={:.3f}", test_approach_dir.x());
-      break; 
+      // --- 核心改进：前瞻性评分 (Long-sighted scoring) ---
+      // 评分在一开始就把后续提取路径 (Extraction) 的可能性参考进去
+      bool extract_valid = true;
+      common::VectorArm q_ext_guess = q_guess; // 从目标点 q_target 开始
+      // 提取路径采样加密 (0.3, 0.6, 1.0)，确保路径在整个提取过程中都是通的
+      for (double s_ext : {0.33, 0.66, 1.0}) {
+        Eigen::Vector3d pos_ext =
+            m_locked_target_pos + axis * (m_extract_distance * s_ext);
+        auto q_ext_sol = withSolver([&](auto &s) {
+          return s.solveIK5DoF(pos_ext, test_approach_dir, q_ext_guess, 0.08);
+        });
+        if (!q_ext_sol || withSolver([&](auto &s) {
+              return s.checkPathCollision(q_ext_guess, q_ext_sol.value());
+            })) {
+          extract_valid = false;
+          break;
+        }
+        q_ext_guess = q_ext_sol.value();
+      }
+
+      if (extract_valid) {
+        m_locked_approach_dir = test_approach_dir;
+        best_q_pregrasp = q_sol.value();
+        plan_success = true;
+        m_logger->info(
+            "+++ Found optimal long-sighted direction: x_score={:.3f}",
+            test_approach_dir.x());
+        break;
+      } else {
+        m_logger->debug("Candidate rejected: approach path is fine but "
+                        "extraction segment is blocked or unreachable");
+      }
     }
   }
 
   if (!plan_success) {
-    m_logger->warn("--- No perfect front-facing direction, attempting fallback with loose tolerance...");
+    m_logger->warn("--- No perfect long-sighted direction, attempting fallback "
+                   "with looser tolerance...");
     for (const auto &dir : candidate_dirs) {
-      Eigen::Vector3d pos = m_locked_target_pos - dir * m_pregrasp_distance;
-      auto q_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(pos, dir, m_arm_state.q, 0.15);
+      Eigen::Vector3d pregrasp_pos =
+          m_locked_target_pos - dir * m_pregrasp_distance;
+
+      // Fallback 同样需要检查提取可行性，容差放宽到 0.08 (同执行阶段)
+      constexpr double FALLBACK_TOL = 0.08;
+
+      auto q_pre_sol = withSolver([&](auto &s) {
+        return s.solveIK5DoF(pregrasp_pos, dir, m_arm_state.q, FALLBACK_TOL);
       });
-      if (q_sol) {
+      if (!q_pre_sol)
+        continue;
+
+      auto q_target_sol = withSolver([&](auto &s) {
+        return s.solveIK5DoF(m_locked_target_pos, dir, q_pre_sol.value(),
+                             FALLBACK_TOL);
+      });
+      if (!q_target_sol)
+        continue;
+
+      Eigen::Vector3d extract_pos =
+          m_locked_target_pos + axis * m_extract_distance;
+      auto q_ext_sol = withSolver([&](auto &s) {
+        return s.solveIK5DoF(extract_pos, dir, q_target_sol.value(),
+                             FALLBACK_TOL);
+      });
+
+      if (q_ext_sol) {
         m_locked_approach_dir = dir;
-        best_q_pregrasp = q_sol.value();
+        best_q_pregrasp = q_pre_sol.value();
         plan_success = true;
-        m_logger->info("+++ Fallback success (Front-facing, tol=0.15)");
+        m_logger->info("+++ Fallback success (Long-sighted, tol={:.2f})",
+                       FALLBACK_TOL);
         break;
       }
     }
@@ -1009,7 +1065,8 @@ void yandy::Robot::handleApproaching() {
   const Eigen::Vector3d current_target =
       m_locked_target_pos - m_locked_approach_dir * m_current_standoff;
 
-  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir)) {
+  // 使用与 PreGrasp 一致的容差 (0.08)
+  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir, true, 0.08)) {
     return;
   }
 
@@ -1040,7 +1097,8 @@ void yandy::Robot::handleExtracting() {
   const Eigen::Vector3d current_target =
       m_locked_target_pos + m_locked_extract_dir * m_current_extract_offset;
 
-  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir)) {
+  // 使用与 PreGrasp 一致的容差 (0.08)
+  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir, true, 0.08)) {
     return;
   }
 
@@ -1418,33 +1476,26 @@ void yandy::Robot::handleStore() {
     }
     case StorePhase::Retreating: {
       // 自动根据 store_frame 的 y 值决定镜像：
-      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y
-      // 偏移与 yaw
+      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw/roll
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
 
-      // 构建 retreat 位姿：store_frame * transform(retreat_pose)
-      // retreat_pose = [x, y, z, roll, pitch, yaw]
-      double y_offset = sign_y * m_store_retreat_y_m;
-      double yaw_offset = sign_y * m_store_retreat_yaw_m;
-      double roll_offset = sign_y * m_store_retreat_roll_m;
-
-      Eigen::Isometry3d retreat_offset = Eigen::Isometry3d::Identity();
-      retreat_offset.translate(
-          Eigen::Vector3d(m_store_retreat_x_m, y_offset, m_store_retreat_z_m));
-      retreat_offset.rotate(
-          Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
-          Eigen::AngleAxisd(m_store_retreat_pitch_m, Eigen::Vector3d::UnitY()) *
-          Eigen::AngleAxisd(roll_offset, Eigen::Vector3d::UnitX()));
-
-      Eigen::Isometry3d retreat_target = sp * retreat_offset;
+      Eigen::Isometry3d retreat_target = Eigen::Isometry3d::Identity();
+      retreat_target.translate(Eigen::Vector3d(m_store_retreat_pos.x(), 
+                                               sign_y * m_store_retreat_pos.y(), 
+                                               m_store_retreat_pos.z()));
+      retreat_target.rotate(
+          Eigen::AngleAxisd(sign_y * m_store_retreat_rpy.z(), Eigen::Vector3d::UnitZ()) *
+          Eigen::AngleAxisd(m_store_retreat_rpy.y(), Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(sign_y * m_store_retreat_rpy.x(), Eigen::Vector3d::UnitX()));
 
       m_logger->info(
           "Store: retreating/repositioning to target [x={:.3f}, y={:.3f}, "
-          "z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, z={:.3f}, "
-          "rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+          "z={:.3f}] (base_pos=[{:.3f},{:.3f},{:.3f}], "
+          "base_rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
           retreat_target.translation().x(), retreat_target.translation().y(),
-          retreat_target.translation().z(), m_store_retreat_x_m, y_offset,
-          m_store_retreat_z_m, roll_offset, m_store_retreat_pitch_m, yaw_offset,
+          retreat_target.translation().z(), 
+          m_store_retreat_pos.x(), sign_y * m_store_retreat_pos.y(), m_store_retreat_pos.z(), 
+          sign_y * m_store_retreat_rpy.x(), m_store_retreat_rpy.y(), sign_y * m_store_retreat_rpy.z(),
           sign_y);
 
       // 使用 6DoF IK 直接求解到 retreat_target
@@ -1473,35 +1524,27 @@ void yandy::Robot::handleStore() {
     switch (m_store_phase) {
     case StorePhase::PreFetch: {
       // 自动根据 store_frame 的 y 值决定镜像：
-      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y
-      // 偏移与 yaw
+      // sign = +1 if y>=0, -1 if y<0. 这样左右对称的 frame 会得到相反的 Y 偏移与 yaw/roll
       const double sign_y = (sp.translation().y() >= 0.0) ? 1.0 : -1.0;
 
-      // 构建 prefetch 位姿：store_frame * transform(prefetch_pose)
-      // prefetch_pose = [x, y, z, roll, pitch, yaw]
-      double y_offset = sign_y * m_retrieve_prefetch_y_m;
-      double yaw_offset = sign_y * m_retrieve_prefetch_yaw_m;
-      double roll_offset = sign_y * m_retrieve_prefetch_roll_m;
-
-      Eigen::Isometry3d prefetch_offset = Eigen::Isometry3d::Identity();
-      prefetch_offset.translate(Eigen::Vector3d(
-          m_retrieve_prefetch_x_m, y_offset, m_retrieve_prefetch_z_m));
-      prefetch_offset.rotate(
-          Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ()) *
-          Eigen::AngleAxisd(m_retrieve_prefetch_pitch_m,
-                            Eigen::Vector3d::UnitY()) *
-          Eigen::AngleAxisd(roll_offset, Eigen::Vector3d::UnitX()));
-
-      Eigen::Isometry3d prefetch_target = sp * prefetch_offset;
+      Eigen::Isometry3d prefetch_target = Eigen::Isometry3d::Identity();
+      prefetch_target.translate(Eigen::Vector3d(m_retrieve_prefetch_pos.x(), 
+                                                sign_y * m_retrieve_prefetch_pos.y(), 
+                                                m_retrieve_prefetch_pos.z()));
+      prefetch_target.rotate(
+          Eigen::AngleAxisd(sign_y * m_retrieve_prefetch_rpy.z(), Eigen::Vector3d::UnitZ()) *
+          Eigen::AngleAxisd(m_retrieve_prefetch_rpy.y(), Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(sign_y * m_retrieve_prefetch_rpy.x(), Eigen::Vector3d::UnitX()));
 
       m_logger->info(
-          "Store (retrieve PreFetch): moving to pre-fetch target [x={:.3f}, "
-          "y={:.3f}, z={:.3f}] (store_frame offsets x={:.3f}, y={:.3f}, "
-          "z={:.3f}, rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
+          "Store (retrieve PreFetch): moving to target [x={:.3f}, y={:.3f}, "
+          "z={:.3f}] (base_pos=[{:.3f},{:.3f},{:.3f}], "
+          "base_rpy=[{:.3f},{:.3f},{:.3f}], sign_y={:.1f})",
           prefetch_target.translation().x(), prefetch_target.translation().y(),
-          prefetch_target.translation().z(), m_retrieve_prefetch_x_m, y_offset,
-          m_retrieve_prefetch_z_m, roll_offset, m_retrieve_prefetch_pitch_m,
-          yaw_offset, sign_y);
+          prefetch_target.translation().z(), 
+          m_retrieve_prefetch_pos.x(), sign_y * m_retrieve_prefetch_pos.y(), m_retrieve_prefetch_pos.z(), 
+          sign_y * m_retrieve_prefetch_rpy.x(), m_retrieve_prefetch_rpy.y(), sign_y * m_retrieve_prefetch_rpy.z(),
+          sign_y);
 
       // 使用 6DoF IK 直接求解到 prefetch_target
       if (!solveAndPlan(prefetch_target)) {

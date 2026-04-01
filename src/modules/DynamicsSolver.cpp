@@ -626,8 +626,57 @@ DynamicsSolver<kFloating>::solveIK5DoF(
     e2 = z_des.cross(e1);
 
     for (int restart = 0; restart < MAX_RETRIES; ++restart) {
-        common::VectorArm arm_q =
-            (restart == 0) ? arm_q_guess : generateRandomArmPositions();
+        common::VectorArm arm_q;
+        
+        if (restart == 0) {
+            // Restart 0: 直接使用当前姿态作为初值
+            arm_q = arm_q_guess;
+        } else if (restart == 1) {
+            // Restart 1: "中点配置" — 针对单向关节 (J2/J3/J5) 的优化
+            // 将单向关节置于活动范围中点，最大化调节余量
+            arm_q = arm_q_guess;
+            // J2: [0, 2.25] → 中点 1.125
+            arm_q[1] = 1.125;
+            // J3: [0, 3.2] → 中点 1.6
+            arm_q[2] = 1.6;
+            // J5: [0, 3.14] → 中点 1.57 (π/2)
+            arm_q[4] = M_PI / 2.0;
+            // J1, J4, J6 保持原值
+        } else if (restart == 2) {
+            // Restart 2: "伸展配置" — 尝试最大伸开姿态
+            arm_q[0] = arm_q_guess[0]; // J1 保持
+            arm_q[1] = 1.8;            // J2 偏上
+            arm_q[2] = 2.5;            // J3 偏大
+            arm_q[3] = 0.0;            // J4 居中
+            arm_q[4] = M_PI / 2.0;     // J5 中点
+            arm_q[5] = 0.0;            // J6 居中
+        } else if (restart == 3) {
+            // Restart 3: "收缩配置" — 尝试收紧姿态
+            arm_q[0] = arm_q_guess[0]; // J1 保持
+            arm_q[1] = 0.5;            // J2 偏下
+            arm_q[2] = 0.8;            // J3 偏小
+            arm_q[3] = 0.0;            // J4 居中
+            arm_q[4] = M_PI / 4.0;     // J5 偏小
+            arm_q[5] = 0.0;            // J6 居中
+        } else if (restart == 4) {
+            // Restart 4: 原手腕翻转策略 (保留，对某些配置仍有效)
+            arm_q = arm_q_guess;
+            arm_q[3] += (arm_q[3] < 0) ? M_PI : -M_PI;
+            // J5 翻转改为关于中点对称，而非简单取反
+            arm_q[4] = M_PI - arm_q[4];
+            arm_q[5] += (arm_q[5] < 0) ? M_PI : -M_PI;
+        } else {
+            // Restart 5+: 随机配置
+            arm_q = generateRandomArmPositions();
+        }
+        
+        // 确保初值在关节限制内
+        for (int j = 0; j < common::ARM_JOINT_NUM; ++j) {
+            arm_q[j] = std::clamp(arm_q[j],
+                m_model.lowerPositionLimit[m_arm_q_idx[j]],
+                m_model.upperPositionLimit[m_arm_q_idx[j]]);
+        }
+
         bool collision_detected = false;
 
         for (int i = 0; i < 200; ++i) { // 增加迭代次数
@@ -704,8 +753,9 @@ DynamicsSolver<kFloating>::solveIK5DoF(
             H.diagonal().array() += lambda_sq;
             g = J_5dof.transpose() * err_5dof;
 
-            // 只有在误差较小时才启用零空间目标，且权重降低
-            if (current_err_norm < 0.1) {
+            // 零空间目标：只有在 restart 0 (基于当前姿态) 且误差较小时才启用，
+            // 随机重启时不应受到当前姿态的牵引，以实现真正的全局搜索。
+            if (restart == 0 && current_err_norm < 0.1) {
                 constexpr double null_space_weight = 0.001;
                 g += null_space_weight * (arm_q_guess - arm_q);
             }

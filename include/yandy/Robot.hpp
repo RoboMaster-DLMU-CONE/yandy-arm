@@ -140,24 +140,16 @@ private:
   double m_store_wait_after_close_s{0.05};
   double m_store_extra_z_above_store_m{0.04}; // lift amount above store_frame after open
   double m_store_retreat_distance_m{0.10};    // retreat distance along -EE_Z (default)
-  // retreat pose relative to store_frame (meters, radians). The final target is computed as:
-  // store_frame * transform(retreat_pose). For store_frame_2 (y<0), y and yaw are mirrored.
-  double m_store_retreat_x_m{0.07};
-  double m_store_retreat_y_m{0.02};
-  double m_store_retreat_z_m{0.03};
-  double m_store_retreat_roll_m{0.0};
-  double m_store_retreat_pitch_m{0.0};
-  double m_store_retreat_yaw_m{0.0};
+  // retreat pose in base frame (meters, radians). The final target uses absolute coordinates:
+  // For store_frame_2 (y<0), y and yaw/roll are mirrored.
+  Eigen::Vector3d m_store_retreat_pos{0.07, 0.02, 0.03};
+  Eigen::Vector3d m_store_retreat_rpy{0.0, 0.0, 0.0};
 
   // ---- 新增：retrieve（取矿）自定义参数 ----
-  // PreFetch 位姿相对 store_frame 的偏移（xyz + rpy），最终目标 = store_frame * transform(prefetch_offset)
-  // 对于 store_frame_2 (y<0)，y 和 yaw 会镜像
-  double m_retrieve_prefetch_x_m{0.07};
-  double m_retrieve_prefetch_y_m{0.02};
-  double m_retrieve_prefetch_z_m{0.03};
-  double m_retrieve_prefetch_roll_m{0.0};
-  double m_retrieve_prefetch_pitch_m{0.0};
-  double m_retrieve_prefetch_yaw_m{0.0};
+  // PreFetch 位姿在基坐标系下的绝对坐标（xyz + rpy）
+  // 对于 store_frame_2 (y<0)，y and yaw/roll 会镜像
+  Eigen::Vector3d m_retrieve_prefetch_pos{0.07, 0.02, 0.03};
+  Eigen::Vector3d m_retrieve_prefetch_rpy{0.0, 0.0, 0.0};
   // PreFetch 位置停留时间（在下降到 store_frame 之前）
   double m_store_pause_pre_fetch_s{0.1};
 
