@@ -466,6 +466,17 @@ Eigen::Isometry3d DynamicsSolver<kFloating>::getEndEffectorPose() const
 }
 
 template<bool kFloating>
+std::pair<Eigen::Vector3d, Eigen::Matrix3d> 
+DynamicsSolver<kFloating>::computeFK(const common::VectorArm& arm_q)
+{
+    const Eigen::VectorXd full_q = buildFullQ(arm_q, m_current_gimbal_q);
+    pinocchio::forwardKinematics(m_model, m_data, full_q);
+    pinocchio::updateFramePlacements(m_model, m_data);
+    const pinocchio::SE3& se3 = m_data.oMf[m_tcp_frame_id];
+    return {se3.translation(), se3.rotation()};
+}
+
+template<bool kFloating>
 Eigen::Isometry3d DynamicsSolver<kFloating>::getCameraPose() const
 {
     return Eigen::Isometry3d(m_data.oMf[m_camera_frame_id].toHomogeneousMatrix());

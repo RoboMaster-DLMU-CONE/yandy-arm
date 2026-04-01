@@ -157,13 +157,32 @@ private:
   std::chrono::steady_clock::time_point m_store_phase_start{std::chrono::steady_clock::now()};
 
   // ---- 抓取流程状态 ----
-  enum class FetchPhase { Seeking, Planning, PreGrasp, Approaching, Extracting, Withdrawing };
+  enum class FetchPhase {
+    Seeking,
+    Planning,
+    PreGrasp,
+    PausePreGrasp, // 新增：预抓取点停留
+    Approaching,
+    Extracting,
+    Withdrawing
+  };
   FetchPhase m_fetch_phase{FetchPhase::Seeking};
+
+  // 抓取各阶段停留时间
+  double m_fetch_pause_after_pregrasp_s{0.1};
+  std::chrono::steady_clock::time_point m_fetch_phase_start{
+      std::chrono::steady_clock::now()};
 
   // ---- 预规划路径 (Planning 阶段生成) ----
   std::vector<common::VectorArm> m_planned_approach_path; // 逼近路径 (PreGrasp -> Grasp)
   std::vector<common::VectorArm> m_planned_extract_path;  // 提取路径 (Grasp -> Extract)
   size_t m_current_path_idx{0}; // 当前执行到的路径点索引
+  
+  // ---- 分段规划 (新策略) ----
+  common::VectorArm m_q_pregrasp{common::VectorArm::Zero()};  // 预抓取点关节配置
+  common::VectorArm m_q_target{common::VectorArm::Zero()};    // 目标点关节配置
+  common::VectorArm m_q_extract{common::VectorArm::Zero()};   // 提取点关节配置
+  static constexpr double MAX_WRIST_DELTA = M_PI * 0.8;       // J4/J6 最大允许变化量 (144°)
 
   // ---- 末端负载状态 ----
   bool m_payload_attached{false};         // 是否有负载 (夹爪夹持物体)
@@ -215,6 +234,7 @@ private:
   void handleSeeking();
   void handlePlanning(); // 新增：预规划阶段
   void handlePreGrasp();
+  void handlePausePreGrasp(); // 新增：预抓取暂停
   void handleApproaching();
   void handleExtracting();
   void handleWithdrawing();

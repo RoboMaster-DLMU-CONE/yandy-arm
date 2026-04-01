@@ -144,6 +144,10 @@ public:
 
     /// 获取末端执行器 (gripper_tcp) 在基座系下的位姿
     Eigen::Isometry3d getEndEffectorPose() const;
+    
+    /// 计算给定关节位置的末端位姿 (用于 IK 误差验证)
+    /// @return {position, rotation_matrix}
+    std::pair<Eigen::Vector3d, Eigen::Matrix3d> computeFK(const common::VectorArm& arm_q);
 
     /// 获取相机光心 (camera_optical_frame) 在基座系下的位姿
     Eigen::Isometry3d getCameraPose() const;

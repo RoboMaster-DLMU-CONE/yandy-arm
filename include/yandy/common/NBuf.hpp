@@ -22,6 +22,13 @@ namespace yandy
         NBuf& operator=(const NBuf&) = delete;
         NBuf(NBuf&& other) = delete;
         NBuf& operator=(NBuf&& other) = delete;
+        
+        /// 清除缓冲区中的数据 (将读取索引设为无效)
+        /// 注意: 这是单线程操作，只应在确保没有并发写入时调用
+        void clear() noexcept
+        {
+            m_cleared.store(true, std::memory_order_release);
+        }
 
         void write(const T& data) noexcept
         {
@@ -36,6 +43,7 @@ namespace yandy
 
             m_latest_idx.store(next_slot, std::memory_order_release);
             m_next_write_idx = next_slot;
+            m_cleared.store(false, std::memory_order_release);  // 写入后标记为有效
         }
 
         void write(T&& data) noexcept
@@ -51,6 +59,7 @@ namespace yandy
 
             m_latest_idx.store(next_slot, std::memory_order_release);
             m_next_write_idx = next_slot;
+            m_cleared.store(false, std::memory_order_release);  // 写入后标记为有效
         }
 
         template <typename Func>
@@ -71,6 +80,11 @@ namespace yandy
 
         std::optional<T> try_read() const noexcept
         {
+            // 如果缓冲区已被清除，返回空
+            if (m_cleared.load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+            
             T out_data;
             auto& slot = m_slots[m_latest_idx.load(std::memory_order_acquire)];
             auto v1 = slot.version.load(std::memory_order_acquire);
@@ -123,6 +137,7 @@ namespace yandy
         std::array<Slot, N> m_slots;
         mutable std::atomic<size_t> m_latest_idx{0};
         size_t m_next_write_idx{0};
+        mutable std::atomic<bool> m_cleared{true};  // 初始状态为已清除 (无数据)
     };
 }
 

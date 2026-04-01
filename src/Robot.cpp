@@ -212,14 +212,17 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         fetch["approach_speed"].value<double>().value_or(m_approach_speed);
     m_extract_distance =
         fetch["extract_distance"].value<double>().value_or(m_extract_distance);
+    m_fetch_pause_after_pregrasp_s =
+        fetch["pause_after_pregrasp_s"].value<double>().value_or(
+            m_fetch_pause_after_pregrasp_s);
     m_current_standoff = m_pregrasp_distance;
   }
   m_logger->info(
       "Fetch params: stability_window={}, stability_threshold={:.4f}, "
       "pregrasp_distance={:.3f}, approach_speed={:.3f}, "
-      "extract_distance={:.3f}",
+      "extract_distance={:.3f}, pause_after_pregrasp={:.3f}s",
       m_stability_window, m_stability_threshold, m_pregrasp_distance,
-      m_approach_speed, m_extract_distance);
+      m_approach_speed, m_extract_distance, m_fetch_pause_after_pregrasp_s);
 
   if (auto store = tbl["store"]; store.is_table()) {
     m_store_approach_offset = store["approach_offset"].value<double>().value_or(
@@ -227,6 +230,9 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
     m_store_pause_after_above_s =
         store["pause_after_above_s"].value<double>().value_or(
             m_store_pause_after_above_s);
+    m_store_pause_pre_fetch_s =
+        store["pause_pre_fetch_s"].value<double>().value_or(
+            m_store_pause_pre_fetch_s);
     m_store_wait_before_open_s =
         store["wait_before_open_s"].value<double>().value_or(
             m_store_wait_before_open_s);
@@ -737,6 +743,9 @@ void yandy::Robot::handleFetching() {
   case FetchPhase::PreGrasp:
     handlePreGrasp();
     break;
+  case FetchPhase::PausePreGrasp:
+    handlePausePreGrasp();
+    break;
   case FetchPhase::Approaching:
     handleApproaching();
     break;
@@ -837,54 +846,40 @@ void yandy::Robot::handleSeeking() {
 }
 
 void yandy::Robot::handlePlanning() {
-  m_logger->info("Entering Planning phase (Dense Sampling & Fallback)...");
+  m_logger->info("Entering Planning phase (Target-First Strategy)...");
+
+  // =========================================================================
+  // 目标点优先策略：
+  // 1. 先求解目标点 IK（更靠近机器人，更容易可达）
+  // 2. 再反推预抓取点（从目标点往回退一小段距离）
+  // 3. 关节空间插值执行
+  // =========================================================================
 
   // 视觉位姿中，X 轴为圆柱体高度方向 (轴向)
   Eigen::Vector3d axis = m_locked_target_pose.rotation().col(0);
   Eigen::Vector3d side1 = m_locked_target_pose.rotation().col(1); // Y 轴
   Eigen::Vector3d side2 = m_locked_target_pose.rotation().col(2); // Z 轴
 
-  std::vector<Eigen::Vector3d> raw_dirs;
-  // 采样策略优化 (增强版)：
-  // 1. 水平环绕 24 个点 (每 15 度)
-  // 2. 俯仰扩展到 +/- 45 度 (每 10 度一个点，共 10 个点) — 增加陡峭角度
-  // 3. 总计 24 * 10 = 240 个方向
+  // 生成候选逼近方向 (增加密度)
+  std::vector<Eigen::Vector3d> candidate_dirs;
   for (int angle = 0; angle < 360; angle += 15) {
     double rad = angle * M_PI / 180.0;
     Eigen::Vector3d horizontal_dir =
         side1 * std::cos(rad) + side2 * std::sin(rad);
 
-    for (double pitch_deg : {-45.0, -35.0, -25.0, -15.0, -5.0,
-                              5.0,  15.0,  25.0,  35.0, 45.0}) {
+    for (double pitch_deg : {-45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0}) {
       double pitch_rad = pitch_deg * M_PI / 180.0;
       Eigen::Vector3d dir =
           horizontal_dir * std::cos(pitch_rad) + axis * std::sin(pitch_rad);
-      raw_dirs.push_back(dir.normalized());
+      dir.normalize();
+      // 只保留正前方半球的方向
+      if (dir.x() > 0.0) {
+        candidate_dirs.push_back(dir);
+      }
     }
   }
 
-  std::vector<Eigen::Vector3d> candidate_dirs;
-  // 两阶段过滤：先用较宽松的阈值筛选，再排序
-  // 第一阶段：x > 0.1 (放宽阈值，捞出更多边缘方向)
-  for (const auto &dir : raw_dirs) {
-    if (dir.x() > 0.1) {
-      candidate_dirs.push_back(dir);
-    }
-  }
-
-  if (candidate_dirs.empty()) {
-    m_logger->warn("--- No directions with x>0.1, relaxing to x>0...");
-    for (const auto &dir : raw_dirs) {
-      if (dir.x() > 0.0) candidate_dirs.push_back(dir);
-    }
-  }
-
-  if (candidate_dirs.empty()) {
-    m_logger->error("--- No candidate directions in the front hemisphere! Check target pose.");
-  }
-
-  // 排序：优先选择正前方 (+X) 的方向
-  // 次优先：Z 分量较大的方向对单向关节 (J2/J3) 更友好
+  // 排序：优先正前方 + 向上方向
   std::sort(candidate_dirs.begin(), candidate_dirs.end(),
             [](const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
               double score_a = a.x() * 1.0 + std::max(0.0, a.z()) * 0.3;
@@ -892,228 +887,356 @@ void yandy::Robot::handlePlanning() {
               return score_a > score_b;
             });
 
-  m_logger->debug("Candidate directions: {} (from {} raw)",
-                  candidate_dirs.size(), raw_dirs.size());
+  m_logger->info("Generated {} candidate approach directions", candidate_dirs.size());
 
   bool plan_success = false;
-  common::VectorArm best_q_pregrasp;
+  
+  // =========================================================================
+  // 双层容差策略：
+  // - 严格容差 (0.12): 优先选择精确解
+  // - 宽松容差 (0.25): 允许工作空间边缘的近似解 (位置误差~3cm, 方向误差~15°)
+  // =========================================================================
+  constexpr double IK_TOL_STRICT = 0.12;   // 优先容差
+  constexpr double IK_TOL_RELAXED = 0.25;  // 最大可接受容差
+  
+  // 减小预抓取距离，让预抓取点更靠近目标点
+  const double effective_pregrasp = std::min(m_pregrasp_distance, 0.05);
 
-  for (size_t i = 0; i < candidate_dirs.size(); ++i) {
-    Eigen::Vector3d test_approach_dir = candidate_dirs[i];
-    common::VectorArm q_guess = m_arm_state.q;
+  // 存储候选解 (可能有多个，按误差排序)
+  struct CandidateSolution {
+    Eigen::Vector3d approach_dir;
+    common::VectorArm q_target;
+    common::VectorArm q_pregrasp;
+    common::VectorArm q_extract;
+    double total_error;  // 用于排序
+  };
+  std::vector<CandidateSolution> candidates;
 
-    // PLANNING TOLERANCE (STRICT) - 规划时使用严苛的容差，为执行留出余量
-    constexpr double PLAN_TOL = 0.06; // 从 0.05 放宽到 0.06，给物理执行留足 buffer 即可
-
-    // 检查 PreGrasp 点 (IK)
+  for (const auto &approach_dir : candidate_dirs) {
+    // 1. 计算目标点位置
+    Eigen::Vector3d target_pos = m_locked_target_pos;
     Eigen::Vector3d pregrasp_pos =
-        m_locked_target_pos - test_approach_dir * m_pregrasp_distance;
-    auto q_sol = withSolver([&](auto &s) {
-      return s.solveIK5DoF(pregrasp_pos, test_approach_dir, q_guess, PLAN_TOL);
+        m_locked_target_pos - approach_dir * effective_pregrasp;
+    Eigen::Vector3d extract_pos =
+        m_locked_target_pos + axis * m_extract_distance;
+
+    // 2. 首先求解目标点 IK（用当前位置作为初值）
+    // 使用宽松容差，但记录实际误差用于排序
+    auto q_target_result = withSolver([&](auto &s) {
+      return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, IK_TOL_RELAXED);
     });
+    
+    common::VectorArm q_target;
+    double target_err = 0.0;
+    if (q_target_result) {
+      q_target = q_target_result.value();
+      target_err = 0.0;  // 精确解
+    } else {
+      // 从 unexpected 中提取近似解
+      q_target = q_target_result.error();
+      // 计算实际误差
+      auto [pos, rot] = withSolver([&](auto &s) {
+        return s.computeFK(q_target);
+      });
+      target_err = (pos - target_pos).norm() + 
+                   (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+      if (target_err > IK_TOL_RELAXED) continue;  // 超出最大容差
+    }
 
-    if (!q_sol)
+    // 3. 再求解预抓取点 IK（以目标点为初值，保证连续性）
+    auto q_pregrasp_result = withSolver([&](auto &s) {
+      return s.solveIK5DoF(pregrasp_pos, approach_dir, q_target, IK_TOL_RELAXED);
+    });
+    
+    common::VectorArm q_pregrasp;
+    double pregrasp_err = 0.0;
+    if (q_pregrasp_result) {
+      q_pregrasp = q_pregrasp_result.value();
+      pregrasp_err = 0.0;
+    } else {
+      q_pregrasp = q_pregrasp_result.error();
+      auto [pos, rot] = withSolver([&](auto &s) {
+        return s.computeFK(q_pregrasp);
+      });
+      pregrasp_err = (pos - pregrasp_pos).norm() + 
+                     (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+      if (pregrasp_err > IK_TOL_RELAXED) continue;
+    }
+
+    // 4. 检查 J4/J6 变化量 (核心约束！)
+    double j4_delta = std::abs(q_target[3] - q_pregrasp[3]);
+    double j6_delta = std::abs(q_target[5] - q_pregrasp[5]);
+
+    // 处理角度回绕
+    if (j4_delta > M_PI) j4_delta = 2.0 * M_PI - j4_delta;
+    if (j6_delta > M_PI) j6_delta = 2.0 * M_PI - j6_delta;
+
+    if (j4_delta > MAX_WRIST_DELTA || j6_delta > MAX_WRIST_DELTA) {
+      m_logger->debug("Direction rejected: J4_delta={:.2f}, J6_delta={:.2f} > {:.2f}",
+                      j4_delta, j6_delta, MAX_WRIST_DELTA);
       continue;
+    }
 
-    q_guess = q_sol.value();
+    // 5. 检查预抓取→目标路径是否有碰撞
+    bool path_collision = withSolver([&](auto &s) {
+      return s.checkPathCollision(q_pregrasp, q_target);
+    });
+    if (path_collision) {
+      m_logger->debug("Direction rejected: approach path collision");
+      continue;
+    }
 
-    // 校验路径中间点（含目标点）。
-    // 中间点的容差可以稍微放宽 (0.08)，只要最终能到达 pregrasp 和 extract 点即可
-    bool path_valid = true;
-    for (double s_dist : {0.5, 1.0}) {
-      Eigen::Vector3d pos =
-          m_locked_target_pos -
-          test_approach_dir * (m_pregrasp_distance * (1.0 - s_dist));
-      auto q_path_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(pos, test_approach_dir, q_guess, 0.08);
+    // 6. 求解提取点 IK
+    auto q_extract_result = withSolver([&](auto &s) {
+      return s.solveIK5DoF(extract_pos, approach_dir, q_target, IK_TOL_RELAXED);
+    });
+    
+    common::VectorArm q_extract;
+    double extract_err = 0.0;
+    if (q_extract_result) {
+      q_extract = q_extract_result.value();
+      extract_err = 0.0;
+    } else {
+      q_extract = q_extract_result.error();
+      auto [pos, rot] = withSolver([&](auto &s) {
+        return s.computeFK(q_extract);
       });
-      if (!q_path_sol || withSolver([&](auto &s) {
-            return s.checkPathCollision(q_guess, q_path_sol.value());
-          })) {
-        path_valid = false;
-        break;
-      }
-      q_guess = q_path_sol.value();
+      extract_err = (pos - extract_pos).norm() + 
+                    (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+      if (extract_err > IK_TOL_RELAXED) continue;
     }
 
-    if (path_valid) {
-      // --- 核心改进：前瞻性评分 (Long-sighted scoring) ---
-      // 评分在一开始就把后续提取路径 (Extraction) 的可能性参考进去
-      bool extract_valid = true;
-      common::VectorArm q_ext_guess = q_guess; // 从目标点 q_target 开始
-      // 提取路径采样加密 (0.3, 0.6, 1.0)，确保路径在整个提取过程中都是通的
-      for (double s_ext : {0.33, 0.66, 1.0}) {
-        Eigen::Vector3d pos_ext =
-            m_locked_target_pos + axis * (m_extract_distance * s_ext);
-        auto q_ext_sol = withSolver([&](auto &s) {
-          return s.solveIK5DoF(pos_ext, test_approach_dir, q_ext_guess, 0.08);
-        });
-        if (!q_ext_sol || withSolver([&](auto &s) {
-              return s.checkPathCollision(q_ext_guess, q_ext_sol.value());
-            })) {
-          extract_valid = false;
-          break;
-        }
-        q_ext_guess = q_ext_sol.value();
-      }
-
-      if (extract_valid) {
-        m_locked_approach_dir = test_approach_dir;
-        best_q_pregrasp = q_sol.value();
-        plan_success = true;
-        m_logger->info(
-            "+++ Found optimal long-sighted direction: x_score={:.3f}",
-            test_approach_dir.x());
-        break;
-      } else {
-        m_logger->debug("Candidate rejected: approach path is fine but "
-                        "extraction segment is blocked or unreachable");
-      }
+    // 7. 检查目标→提取路径是否有碰撞
+    path_collision = withSolver([&](auto &s) {
+      return s.checkPathCollision(q_target, q_extract);
+    });
+    if (path_collision) {
+      m_logger->debug("Direction rejected: extract path collision");
+      continue;
     }
+
+    // 所有检查通过，加入候选列表
+    double total_err = target_err + pregrasp_err + extract_err;
+    candidates.push_back({
+      approach_dir, q_target, q_pregrasp, q_extract, total_err
+    });
+    
+    m_logger->debug("Candidate found: dir=[{:.3f},{:.3f},{:.3f}], err={:.4f}",
+                    approach_dir.x(), approach_dir.y(), approach_dir.z(), total_err);
+    
+    // 如果已找到精确解 (total_err == 0)，直接使用
+    if (total_err < 1e-6) break;
   }
+  
+  // 从候选中选择最优解 (误差最小)
+  if (!candidates.empty()) {
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CandidateSolution &a, const CandidateSolution &b) {
+                return a.total_error < b.total_error;
+              });
+    
+    const auto &best = candidates[0];
+    m_locked_approach_dir = best.approach_dir;
+    m_locked_extract_dir = axis;
+    m_q_pregrasp = best.q_pregrasp;
+    m_q_target = best.q_target;
+    m_q_extract = best.q_extract;
+    plan_success = true;
 
-  if (!plan_success) {
-    m_logger->warn("--- No perfect long-sighted direction, attempting fallback "
-                   "with looser tolerance...");
-    for (const auto &dir : candidate_dirs) {
-      Eigen::Vector3d pregrasp_pos =
-          m_locked_target_pos - dir * m_pregrasp_distance;
-
-      // Fallback 同样需要检查提取可行性，容差放宽到 0.08 (同执行阶段)
-      constexpr double FALLBACK_TOL = 0.08;
-
-      auto q_pre_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(pregrasp_pos, dir, m_arm_state.q, FALLBACK_TOL);
-      });
-      if (!q_pre_sol)
-        continue;
-
-      auto q_target_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(m_locked_target_pos, dir, q_pre_sol.value(),
-                             FALLBACK_TOL);
-      });
-      if (!q_target_sol)
-        continue;
-
-      Eigen::Vector3d extract_pos =
-          m_locked_target_pos + axis * m_extract_distance;
-      auto q_ext_sol = withSolver([&](auto &s) {
-        return s.solveIK5DoF(extract_pos, dir, q_target_sol.value(),
-                             FALLBACK_TOL);
-      });
-
-      if (q_ext_sol) {
-        m_locked_approach_dir = dir;
-        best_q_pregrasp = q_pre_sol.value();
-        plan_success = true;
-        m_logger->info("+++ Fallback success (Long-sighted, tol={:.2f})",
-                       FALLBACK_TOL);
-        break;
-      }
-    }
+    m_logger->info("+++ Selected best direction: [{:.3f},{:.3f},{:.3f}] (err={:.4f}, {} candidates)",
+                   best.approach_dir.x(), best.approach_dir.y(), best.approach_dir.z(),
+                   best.total_error, candidates.size());
   }
 
   if (plan_success) {
-    m_logger->info("+++ Selected direction: [{:.3f},{:.3f},{:.3f}]",
-                   m_locked_approach_dir.x(), m_locked_approach_dir.y(),
-                   m_locked_approach_dir.z());
+    // 生成逼近路径 (关节空间线性插值)
+    m_planned_approach_path.clear();
+    constexpr int APPROACH_STEPS = 15;
+    for (int i = 0; i <= APPROACH_STEPS; ++i) {
+      double t = static_cast<double>(i) / APPROACH_STEPS;
+      common::VectorArm q_interp = m_q_pregrasp + t * (m_q_target - m_q_pregrasp);
+      m_planned_approach_path.push_back(q_interp);
+    }
 
-    // 计算提取方向：严格按照能量单元的主轴方向 (瓶口 -> 瓶底)
-    // 假设视觉解算中，Local +X 就是从瓶口指向瓶底的方向
-    // 如果你在测试中发现方向反了（变成了瓶底->瓶口），只需将这里的 axis 改为 -axis 即可
-    m_locked_extract_dir = axis;
+    // 生成提取路径 (关节空间线性插值)
+    m_planned_extract_path.clear();
+    constexpr int EXTRACT_STEPS = 10;
+    for (int i = 0; i <= EXTRACT_STEPS; ++i) {
+      double t = static_cast<double>(i) / EXTRACT_STEPS;
+      common::VectorArm q_interp = m_q_target + t * (m_q_extract - m_q_target);
+      m_planned_extract_path.push_back(q_interp);
+    }
 
+    m_logger->info("IK solutions ready: pregrasp, target, extract");
+
+    // 直接进入预抓取阶段（跳过 OMPL，使用 Ruckig 直接驱动）
     m_planner->brake();
-    m_planner->requestPlan(m_arm_state.q, best_q_pregrasp);
-    m_ompl_pending = true;
     m_fetch_phase = FetchPhase::PreGrasp;
+    m_logger->info("Starting direct approach to pregrasp point...");
   } else {
-    m_logger->error(
-        "--- Absolutely no valid approach directions found! Aborting.");
+    m_logger->error("--- No valid approach direction found! Aborting.");
+    m_logger->error("    Target: [{:.3f},{:.3f},{:.3f}], tried {} directions",
+                    m_locked_target_pos.x(), m_locked_target_pos.y(),
+                    m_locked_target_pos.z(), candidate_dirs.size());
     resetFetchState();
     m_fsm.processCmd(YandyControlCmd::CMD_SWITCH_FETCH);
   }
 }
 
 void yandy::Robot::handlePreGrasp() {
-  const Eigen::Vector3d pregrasp_pos =
-      m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
+  // 阶段1: 直接用 Ruckig 驱动到预抓取点（不使用 OMPL）
+  
+  // 获取底盘数据用于动力学补偿
+  const auto &pack = m_input.getLatestCommand();
+  m_arm_cmd.tau_ff = withSolver([&](auto &s) {
+    return s.computeDynamics(
+        Eigen::Vector3d(pack.ax, pack.ay, pack.az),
+        Eigen::Vector3d(pack.gx, pack.gy, pack.gz),
+        Eigen::Quaterniond(pack.qw, pack.qx, pack.qy, pack.qz));
+  });
 
-  // 使用较大的容差 (0.08) 来执行
-  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir, true, 0.08)) {
-    return;
+  // 设置预抓取点为目标
+  m_planner->setTarget(m_q_pregrasp);
+  m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+  m_arm_hw.write(m_arm_cmd);
+
+  // 检查是否到达预抓取点
+  const double joint_error = (m_arm_state.q - m_q_pregrasp).norm();
+  
+  // 每秒打印一次状态
+  static int pregrasp_frame_count = 0;
+  if (++pregrasp_frame_count % 250 == 0) {
+    const Eigen::Vector3d ee_pos =
+        withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
+    m_logger->info("PreGrasp progress: joint_err={:.4f} rad, ee_pos=[{:.3f},{:.3f},{:.3f}]",
+                   joint_error, ee_pos.x(), ee_pos.y(), ee_pos.z());
   }
 
-  const Eigen::Vector3d ee_pos =
-      withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
-  const double dist = (ee_pos - pregrasp_pos).norm();
+  // 当关节误差足够小时，进入暂停阶段
+  if (joint_error < 0.03) {
+    pregrasp_frame_count = 0;
+    const Eigen::Vector3d ee_pos =
+        withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
+    m_logger->info("Reached pregrasp (joint_err={:.4f}), ee=[{:.3f},{:.3f},{:.3f}]",
+                   joint_error, ee_pos.x(), ee_pos.y(), ee_pos.z());
+    
+    m_fetch_phase = FetchPhase::PausePreGrasp;
+    m_fetch_phase_start = std::chrono::steady_clock::now();
+    m_logger->info("Pausing at pregrasp for {:.3f}s...", m_fetch_pause_after_pregrasp_s);
+  }
+}
 
-  if (dist < 0.05 && m_planner->isFinished()) {
-    m_logger->info("Reached pre-grasp point, distance: {:.3f}m", dist);
+void yandy::Robot::handlePausePreGrasp() {
+  // 获取底盘数据用于动力学补偿
+  const auto &pack = m_input.getLatestCommand();
+  m_arm_cmd.tau_ff = withSolver([&](auto &s) {
+    return s.computeDynamics(
+        Eigen::Vector3d(pack.ax, pack.ay, pack.az),
+        Eigen::Vector3d(pack.gx, pack.gy, pack.gz),
+        Eigen::Quaterniond(pack.qw, pack.qx, pack.qy, pack.qz));
+  });
+  
+  // 在预抓取点保持位姿，等待稳定
+  m_planner->setTarget(m_q_pregrasp);
+  m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+  m_arm_hw.write(m_arm_cmd);
+
+  const auto elapsed =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                    m_fetch_phase_start)
+          .count();
+  if (elapsed >= m_fetch_pause_after_pregrasp_s) {
+    m_logger->info("Pregrasp pause complete ({:.3f}s), starting approach to target",
+                   elapsed);
     m_fetch_phase = FetchPhase::Approaching;
   }
 }
 
 void yandy::Robot::handleApproaching() {
-  // 直线逼近：逐步减小 standoff 距离
-  m_current_standoff -= m_approach_speed * DT;
+  // 阶段2: 直接驱动到目标点，依靠 Ruckig 平滑轨迹
+  
+  // 获取底盘数据用于动力学补偿
+  const auto &pack = m_input.getLatestCommand();
+  m_arm_cmd.tau_ff = withSolver([&](auto &s) {
+    return s.computeDynamics(
+        Eigen::Vector3d(pack.ax, pack.ay, pack.az),
+        Eigen::Vector3d(pack.gx, pack.gy, pack.gz),
+        Eigen::Quaterniond(pack.qw, pack.qx, pack.qy, pack.qz));
+  });
 
-  if (m_current_standoff <= 0.0) {
-    m_current_standoff = 0.0;
+  // 直接设置最终目标 (m_q_target)，Ruckig 会平滑执行
+  m_planner->setTarget(m_q_target);
+  m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+  m_arm_hw.write(m_arm_cmd);
+
+  // 检查是否到达目标点 (关节空间误差)
+  const double joint_error = (m_arm_state.q - m_q_target).norm();
+  
+  // 每秒打印一次状态
+  static int approach_frame_count = 0;
+  if (++approach_frame_count % 250 == 0) {
+    const Eigen::Vector3d ee_pos =
+        withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
+    const double cart_dist = (ee_pos - m_locked_target_pos).norm();
+    m_logger->info("Approach progress: joint_err={:.4f}, cart_dist={:.3f}m, finished={}",
+                   joint_error, cart_dist, m_planner->isFinished());
   }
-
-  const Eigen::Vector3d current_target =
-      m_locked_target_pos - m_locked_approach_dir * m_current_standoff;
-
-  // 使用与 PreGrasp 一致的容差 (0.08)
-  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir, true, 0.08)) {
-    return;
-  }
-
-  // 检查是否到达目标
-  if (m_current_standoff <= 0.0 && m_planner->isFinished()) {
-    m_logger->info("Reached grasp target, closing claw");
+  
+  // 当关节误差 < 0.05 rad 时，进入夹取
+  // 不再依赖 isFinished()，因为它可能不可靠
+  if (joint_error < 0.05) {
+    approach_frame_count = 0;  // 重置计数
+    const Eigen::Vector3d ee_pos =
+        withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
+    const double cart_dist = (ee_pos - m_locked_target_pos).norm();
+    m_logger->info("Reached grasp target (joint_err={:.4f}, cart_dist={:.3f}m), closing claw",
+                   joint_error, cart_dist);
     m_effector.closeClaw();
 
     // 设置 FSM 手持状态标志 (用于存矿流程判断)
     m_fsm.setMineralAttached(true);
 
-    m_current_extract_offset = 0.0;
+    // 准备提取阶段
     m_fetch_phase = FetchPhase::Extracting;
-    m_logger->info(
-        "Grasp complete, starting extraction along [{:.3f},{:.3f},{:.3f}]...",
-        m_locked_extract_dir.x(), m_locked_extract_dir.y(),
-        m_locked_extract_dir.z());
+    m_logger->info("Grasp complete, starting extraction...");
   }
 }
 
 void yandy::Robot::handleExtracting() {
-  // 沿提取方向逐步移动，将能量单元从容器中取出
-  m_current_extract_offset += m_approach_speed * DT;
-  if (m_current_extract_offset > m_extract_distance) {
-    m_current_extract_offset = m_extract_distance;
-  }
+  // 直接驱动到提取点，依靠 Ruckig 平滑轨迹
+  
+  // 获取底盘数据用于动力学补偿
+  const auto &pack = m_input.getLatestCommand();
+  m_arm_cmd.tau_ff = withSolver([&](auto &s) {
+    return s.computeDynamics(
+        Eigen::Vector3d(pack.ax, pack.ay, pack.az),
+        Eigen::Vector3d(pack.gx, pack.gy, pack.gz),
+        Eigen::Quaterniond(pack.qw, pack.qx, pack.qy, pack.qz));
+  });
 
-  const Eigen::Vector3d current_target =
-      m_locked_target_pos + m_locked_extract_dir * m_current_extract_offset;
+  // 直接设置提取目标 (m_q_extract)
+  m_planner->setTarget(m_q_extract);
+  m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+  m_arm_hw.write(m_arm_cmd);
 
-  // 使用与 PreGrasp 一致的容差 (0.08)
-  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir, true, 0.08)) {
-    return;
-  }
-
-  if (m_current_extract_offset >= m_extract_distance &&
-      m_planner->isFinished()) {
-    m_logger->info(
-        "Extraction complete ({:.3f}m along [{:.3f},{:.3f},{:.3f}]), "
-        "starting withdrawal...",
-        m_extract_distance, m_locked_extract_dir.x(), m_locked_extract_dir.y(),
-        m_locked_extract_dir.z());
+  // 检查是否完成提取 (关节空间误差)
+  const double joint_error = (m_arm_state.q - m_q_extract).norm();
+  if (joint_error < 0.05 && m_planner->isFinished()) {
+    m_logger->info("Extraction complete (err={:.4f}), starting withdrawal...", joint_error);
     m_fetch_phase = FetchPhase::Withdrawing;
   }
 }
 
 void yandy::Robot::handleWithdrawing() {
+  // 获取底盘数据用于动力学补偿
+  const auto &pack = m_input.getLatestCommand();
+  m_arm_cmd.tau_ff = withSolver([&](auto &s) {
+    return s.computeDynamics(
+        Eigen::Vector3d(pack.ax, pack.ay, pack.az),
+        Eigen::Vector3d(pack.gx, pack.gy, pack.gz),
+        Eigen::Quaterniond(pack.qw, pack.qx, pack.qy, pack.qz));
+  });
+  
   // 直接结束撤回阶段：不要回到预抓取点，立即退出 FetchingMode 并回到手动控制
   m_logger->info("Withdrawing: skipping return-to-pregrasp and exiting fetch "
                  "mode immediately");
@@ -1154,6 +1277,14 @@ void yandy::Robot::resetFetchState() {
   m_locked_target_valid = false;
   m_ompl_pending = false;
   m_ompl_executing = false;
+  
+  // 清空预规划路径
+  m_planned_approach_path.clear();
+  m_planned_extract_path.clear();
+  m_current_path_idx = 0;
+  m_q_pregrasp.setZero();
+  m_q_target.setZero();
+  m_q_extract.setZero();
 }
 
 void yandy::Robot::updatePayloadMass() {

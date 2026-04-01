@@ -39,7 +39,7 @@ public:
     m_zeroingVelocityThreshold =
         tbl["zeroing_velocity_threshold"].value<float>().value();
     m_zeroingStallTimeMs = tbl["zeroing_stall_time_ms"].value<int>().value();
-    m_openPosition = tbl["open_position"].value<float>().value();
+    m_stroke = tbl["stroke"].value<float>().value();
     m_collisionCurrentThreshold =
         tbl["collision_current_threshold"].value<float>().value();
 
@@ -64,10 +64,8 @@ public:
     }
     m_logger->info("张开夹爪");
     m_state = State::Opening;
-    m_motor.setPosRef(m_offset - m_dir * m_openPosition);
-    m_motor.setTorRef(
-        m_dir *
-        m_mitFeedforwardTorque); // 张开的方向应该和闭合的力矩方向相反，如果dir影响的是位置，那推力也是跟着dir变的。由于之前你是正常的，我先将其恢复为你代码原始的配置，仅仅加上方向。
+    m_motor.setPosRef(m_offset - m_dir * m_stroke);
+    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque);
   }
 
   void closeClaw() override {
@@ -76,12 +74,12 @@ public:
     }
     m_logger->info("闭合夹爪 (目标: 超过原零点 0.2 rad)");
     m_state = State::Closing;
-    
+
     // 目标位置: 往闭合方向（m_dir）多走 0.2 rad
     float over_close_pos = m_offset + m_dir * 0.2f;
     m_motor.setPosRef(over_close_pos);
-    m_motor.setTorRef(-m_dir * m_mitFeedforwardTorque); // 同上，恢复到你原本工作正常的方向关系
-    
+    m_motor.setTorRef(m_dir * m_mitFeedforwardTorque);
+
     m_prevCurrent = 0.0f;
     m_firstUpdateInClosing = true;
   }
@@ -91,7 +89,7 @@ public:
 
     switch (m_state) {
     case State::Opening: {
-      float targetPos = m_offset - m_dir * m_openPosition;
+      float targetPos = m_offset - m_dir * m_stroke;
       float posError = std::abs(targetPos - status.reduced_angle_rad);
       if (posError < 0.05f) {
         m_state = State::Idle;
@@ -119,7 +117,7 @@ public:
       if (posError < 0.05f) {
         m_state = State::Idle;
         m_logger->info("夹爪已完全闭合 (未检测到物体)");
-        
+
         // 可选：如果到达了这个极限位置，也许这里就是新的物理极限，
         // 我们也可以把这里当做新的零点，但目前用户需求是“检测到电流加大”时更新，
         // 如果能走到这里说明没有碰壁。我们可以暂时什么都不做，或者也可以更新零点。
@@ -137,25 +135,26 @@ public:
 
         if (collision) {
           // 判断碰撞位置是否在原零点之后
-          // 因为 m_dir 是闭合方向，所以 m_dir * (currentPos - m_offset) 如果大于 0，说明超过了原零点
-          // 举例：m_dir = -1, m_offset = 0。currentPos = -0.1，则 -1 * (-0.1 - 0) = 0.1 > 0
+          // 因为 m_dir 是闭合方向，所以 m_dir * (currentPos - m_offset)
+          // 如果大于 0，说明超过了原零点 举例：m_dir = -1, m_offset =
+          // 0。currentPos = -0.1，则 -1 * (-0.1 - 0) = 0.1 > 0
           bool is_past_zero = (m_dir * (currentPos - m_offset) > 0.0f);
-          
+
           if (is_past_zero) {
-            m_logger->info(
-                "在原零点之后检测到物体，更新零点并切换到保持模式 (pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
-                currentPos, m_offset, currentMA);
-            
+            m_logger->info("在原零点之后检测到物体，更新零点并切换到保持模式 "
+                           "(pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
+                           currentPos, m_offset, currentMA);
+
             // 更新新的零点
             m_offset = currentPos;
-            
+
             // 保持位置在新的零点的 -0.05rad 之前 (偏向张开方向)
             float holdPosition = m_offset - m_dir * 0.05f;
             enterHolding(holdPosition);
           } else {
-            m_logger->info(
-                "在原零点之前检测到物体，切换到保持模式 (pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
-                currentPos, m_offset, currentMA);
+            m_logger->info("在原零点之前检测到物体，切换到保持模式 "
+                           "(pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
+                           currentPos, m_offset, currentMA);
             enterHolding(currentPos);
           }
         }
@@ -186,7 +185,7 @@ public:
       return false;
     }
     auto status = m_motor.getStatusPlain();
-    float targetPos = m_offset - m_dir * m_openPosition;
+    float targetPos = m_offset - m_dir * m_stroke;
     return std::abs(targetPos - status.reduced_angle_rad) < 0.1f;
   }
 
@@ -207,9 +206,9 @@ private:
     constexpr int kLoopIntervalMs = 2;
 
     // 确定张开方向。
-    // openClaw 的目标是 m_offset - m_dir * m_openPosition
-    // 所以从 m_offset 出发，张开方向就是 -m_dir * m_openPosition 的方向
-    float zeroingDir = (m_openPosition >= 0) ? -m_dir : m_dir;
+    // openClaw 的目标是 m_offset - m_dir * m_stroke
+    // 所以从 m_offset 出发，张开方向就是 -m_dir * m_stroke 的方向
+    float zeroingDir = (m_stroke >= 0) ? -m_dir : m_dir;
 
     m_logger->info("回零运动方向: {}", zeroingDir > 0 ? "正向" : "反向");
 
@@ -233,11 +232,12 @@ private:
     float openLimitPos = status.reduced_angle_rad;
 
     // 重新计算 m_offset (闭合零点)。
-    // 根据公式: openLimitPos = m_offset - m_dir * m_openPosition
-    // 推导得: m_offset = openLimitPos + m_dir * m_openPosition
-    m_offset = openLimitPos + m_dir * m_openPosition;
+    // 根据公式: openLimitPos = m_offset - m_dir * m_stroke
+    // 推导得: m_offset = openLimitPos + m_dir * m_stroke
+    m_offset = openLimitPos + m_dir * m_stroke;
 
-    m_logger->info("回零完成, 张开极限位置={:.4f} rad, 计算出的闭合零点(offset)={:.4f} rad",
+    m_logger->info("回零完成, 张开极限位置={:.4f} rad, "
+                   "计算出的闭合零点(offset)={:.4f} rad",
                    openLimitPos, m_offset);
 
     // 回零后停在当前的张开极限位置，避免突发运动
@@ -263,8 +263,8 @@ private:
   float m_holdingTorque = 1.0f;
 
   State m_state = State::Idle;
-  float m_offset = 0.0f;       // 校准偏移量
-  float m_openPosition = 0.5f; // 张开位置
+  float m_offset = 0.0f; // 校准偏移量
+  float m_stroke = 0.5f; // 行程 (从张开极限到闭合零点的距离)
 
   float m_prevCurrent = 0.0f;
   bool m_firstUpdateInClosing = true;

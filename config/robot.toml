@@ -24,8 +24,8 @@ port = 9876
 mode = "fixed"
 # 固定模式下的能量单元位姿 (base_link 坐标系)
 # position: [x, y, z] 单位 m; rpy: [roll, pitch, yaw] 单位 rad
-position = [0.48, 0.2, 0.45]
-rpy = [1.0, 1.57, 0]
+position = [0.48, 0.0, 0.48]
+rpy = [0.9, 1.57, 0]
 # 随机模式下的生成范围 (base_link 坐标系)
 random_x_range = [0.2, 0.4]
 random_y_range = [-0.2, 0.2]
@@ -47,16 +47,16 @@ approach_offset = 0.15 # 存取矿时，沿世界 Z 轴（竖直向上）的预�
 # 停顿：到达 above_pose 后的等待时间（秒）
 pause_after_above_s = 0.8
 # 在开爪前等待/开爪后等待/闭爪后等待（秒）
-wait_before_open_s = 0.8
-wait_after_open_s = 0.8
-wait_after_close_s = 0.8
+wait_before_open_s = 0.5
+wait_after_open_s = 0.5
+wait_after_close_s = 0.5
 # PreFetch 位置停留时间（在下降到 store_frame 之前，秒）
 pause_pre_fetch_s = 0.1
 # 存矿退回位姿（retreat）：基坐标系下的绝对坐标 (xyz + rpy)
 # 对于 store_frame_2 (y<0)，y 和 yaw/roll 会自动镜像
 retreat_pos = [-0.12, 0.17, 0.38]
-retreat_rpy = [-3.04, 0.98, -0.48]
+retreat_rpy = [-3.00, 0.98, -0.38]
 # 取矿预抓取位姿（prefetch）：基坐标系下的绝对坐标 (xyz + rpy)
 # 对于 store_frame_2 (y<0)，y 和 yaw/roll 会自动镜像
 prefetch_pos = [-0.12, 0.17, 0.38]
-prefetch_rpy = [-3.04, 0.98, -0.48]
+prefetch_rpy = [-3.00, 0.98, -0.38]

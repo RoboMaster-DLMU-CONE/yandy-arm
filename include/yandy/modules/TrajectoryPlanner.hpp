@@ -125,6 +125,10 @@ namespace yandy::modules
 
         void advanceToNextWaypoint();
 
+        // ---- Pinocchio 索引映射 (由构造时确定) ----
+        std::array<int, common::ARM_JOINT_NUM> m_arm_q_idx{};
+        std::array<int, common::GIMBAL_JOINT_NUM> m_gimbal_q_idx{};
+
         // ---- OMPL 碰撞检测 (线程私有数据) ----
         pinocchio::Model m_model;               // 拷贝，OMPL 线程独占
         pinocchio::Data m_data;

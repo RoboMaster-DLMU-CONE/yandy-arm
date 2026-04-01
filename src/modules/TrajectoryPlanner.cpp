@@ -44,6 +44,29 @@ namespace yandy::modules
         m_ruckig_input.target_velocity.setZero();
         m_ruckig_input.target_acceleration.setZero();
 
+        // 初始化关节索引映射
+        const char* arm_joint_names[common::ARM_JOINT_NUM] = {
+            "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"
+        };
+        const char* gimbal_joint_names[common::GIMBAL_JOINT_NUM] = {
+            "gimbal_joint_1", "gimbal_joint_2", "gimbal_joint_3"
+        };
+        
+        for (int i = 0; i < common::ARM_JOINT_NUM; ++i) {
+            if (m_model.existJointName(arm_joint_names[i])) {
+                m_arm_q_idx[i] = static_cast<int>(m_model.joints[m_model.getJointId(arm_joint_names[i])].idx_q());
+            } else {
+                m_logger->error("Arm joint '{}' not found during TrajectoryPlanner initialization", arm_joint_names[i]);
+            }
+        }
+        for (int i = 0; i < common::GIMBAL_JOINT_NUM; ++i) {
+            if (m_model.existJointName(gimbal_joint_names[i])) {
+                m_gimbal_q_idx[i] = static_cast<int>(m_model.joints[m_model.getJointId(gimbal_joint_names[i])].idx_q());
+            } else {
+                m_logger->error("Gimbal joint '{}' not found during TrajectoryPlanner initialization", gimbal_joint_names[i]);
+            }
+        }
+
         // 启动 OMPL 后台线程
         m_plan_thread = std::thread([this] { planLoop(); });
         m_logger->info("TrajectoryPlanner initialized, dt={:.4f}s, DOF={}, max_vel={:.2f}, max_acc={:.2f}, max_jerk={:.2f}",
@@ -151,6 +174,9 @@ namespace yandy::modules
 
     void TrajectoryPlanner::requestPlan(const common::VectorArm& q_start, const common::VectorArm& q_goal)
     {
+        // 清除旧的规划结果，避免读取到过期数据
+        m_plan_result_buf.clear();
+        
         {
             std::lock_guard lock(m_plan_mutex);
             m_plan_request.q_start = q_start;
@@ -246,24 +272,46 @@ namespace yandy::modules
         auto space = std::make_shared<ob::RealVectorStateSpace>(DOF);
         ob::RealVectorBounds bounds(DOF);
 
-        // 从 Pinocchio model 读取机械臂关节限位 (使用正确的 Pinocchio 索引)
+        // 从 Pinocchio model 读取机械臂关节限位
+        // 注意：Pinocchio model 中关节的索引取决于它是固定基座还是浮动基座
+        // 浮动基座下，前 7 个维度 (nq) 是 FreeFlyer [x, y, z, qx, qy, qz, qw]
+        // 我们需要根据真实的 idx_q 来获取限位
+        
+        // 我们通过查找关节名称来获取正确的 idx_q，这在 DynamicsSolver 中已经做过类似的事情
+        // 为了保持 TrajectoryPlanner 的独立性，我们在这里也进行查找或使用 common 定义
+        const char* arm_joint_names[common::ARM_JOINT_NUM] = {
+            "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"
+        };
+
         bool invalid_bounds = false;
         for (int i = 0; i < DOF; ++i)
         {
-            const int idx = common::ARM_Q_INDICES[i];
-            const double low = m_model.lowerPositionLimit[idx];
-            const double high = m_model.upperPositionLimit[idx];
-            // 记录到 bounds（即便无效也先记录，随后检测）
-            bounds.setLow(i, low);
-            bounds.setHigh(i, high);
+            if (!m_model.existJointName(arm_joint_names[i])) {
+                m_logger->error("OMPL: Arm joint '{}' not found in model!", arm_joint_names[i]);
+                invalid_bounds = true;
+                continue;
+            }
+            auto jid = m_model.getJointId(arm_joint_names[i]);
+            const int idx = static_cast<int>(m_model.joints[jid].idx_q());
+            
+            double low = m_model.lowerPositionLimit[idx];
+            double high = m_model.upperPositionLimit[idx];
+
+            // 检查并修复无限大/无效限位
+            if (low < -1e10) low = -2.0 * M_PI;
+            if (high > 1e10) high = 2.0 * M_PI;
+
             if (!(low < high)) {
-                m_logger->error("OMPL invalid joint limits for arm dim {} (model idx {}): lower={} >= upper={}", i, idx, low, high);
+                m_logger->error("OMPL invalid joint limits for arm dim {} (joint {} at model idx {}): lower={} >= upper={}", 
+                               i, arm_joint_names[i], idx, low, high);
                 invalid_bounds = true;
             }
+
+            bounds.setLow(i, low);
+            bounds.setHigh(i, high);
         }
 
         if (invalid_bounds) {
-            // 返回无效的规划结果，避免抛出 OMPL 异常导致进程终止
             m_logger->warn("OMPL plan aborted due to invalid joint limits (see errors)");
             plan.valid = false;
             return plan;
@@ -272,8 +320,7 @@ namespace yandy::modules
         // 打印模型信息与关节限位（便于诊断）
         m_logger->info("OMPL model.nq={}, DOF={} ", m_model.nq, DOF);
         for (int i = 0; i < DOF; ++i) {
-            const int idx = common::ARM_Q_INDICES[i];
-            m_logger->info("OMPL bounds dim {} -> model idx {} : lower={}, upper={}", i, idx,
+            m_logger->info("OMPL bounds dim {} ({}) : lower={}, upper={}", i, arm_joint_names[i],
                            bounds.low[i], bounds.high[i]);
         }
 
@@ -283,16 +330,28 @@ namespace yandy::modules
             og::SimpleSetup ss(space);
 
             // 碰撞检测回调 — 使用线程私有的 Pinocchio data
-            // 将 6D 机械臂配置 + 3D 云台状态组装成完整 9D 进行碰撞检测
+            // 将 6D 机械臂配置 + 3D 云台状态组装成完整配置向量进行碰撞检测
             ss.setStateValidityChecker([this, &gimbal_q](const ob::State* state) -> bool
             {
                 const auto* s = state->as<ob::RealVectorStateSpace::StateType>();
-                common::VectorArm arm_q;
-                for (int i = 0; i < DOF; ++i)
-                    arm_q[i] = s->values[i];
+                
+                // 组装完整配置向量 (大小为 m_model.nq)
+                Eigen::VectorXd full_q = Eigen::VectorXd::Zero(m_model.nq);
+                
+                // 如果是浮动基座 (nq = 7 + 9 = 16)
+                if (m_model.nq > common::JOINT_NUM) {
+                    full_q[6] = 1.0; // qw = 1 (identity quaternion)
+                }
 
-                // 组装完整 9D 配置
-                const common::VectorJ full_q = common::combineJoints(arm_q, gimbal_q);
+                // 填充机械臂关节
+                for (int i = 0; i < DOF; ++i) {
+                    full_q[m_arm_q_idx[i]] = s->values[i];
+                }
+                
+                // 填充云台关节
+                for (int i = 0; i < common::GIMBAL_JOINT_NUM; ++i) {
+                    full_q[m_gimbal_q_idx[i]] = gimbal_q[i];
+                }
 
                 return !pinocchio::computeCollisions(m_model, m_data, m_geom_model, m_geom_data, full_q, true);
             });
