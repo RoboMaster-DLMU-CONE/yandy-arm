@@ -266,13 +266,16 @@ bool UsbProvider::DataQualityMonitor::is_unhealthy(int zero_threshold, int timeo
     auto silence_duration = std::chrono::duration_cast<std::chrono::seconds>(
         now - last_valid_data).count();
     
-    // 条件1: 超时无有效数据
-    if (silence_duration > timeout_sec) {
+    // 获取当前连续全0包计数
+    uint64_t consecutive_zeros = consecutive_zero_packets.load(std::memory_order_relaxed);
+    
+    // 条件1: 连续全0数据包过多
+    if (consecutive_zeros >= static_cast<uint64_t>(zero_threshold)) {
         return true;
     }
     
-    // 条件2: 连续全0数据包过多
-    if (consecutive_zero_packets.load(std::memory_order_relaxed) >= static_cast<uint64_t>(zero_threshold)) {
+    // 条件2: 超时无有效数据（并且总包数大于0，避免刚启动时误触发）
+    if (silence_duration > timeout_sec && total_packets.load(std::memory_order_relaxed) > 10) {
         return true;
     }
     
@@ -294,9 +297,17 @@ void UsbProvider::monitor_worker() {
         
         if (m_quality.is_unhealthy(m_zero_packet_threshold, m_timeout_sec)) {
             auto consecutive = m_quality.consecutive_zero_packets.load();
-            m_logger->error("Data quality unhealthy detected! consecutive_zero_packets={}", 
-                          consecutive);
+            auto total = m_quality.total_packets.load();
+            auto now = std::chrono::steady_clock::now();
+            auto silence = std::chrono::duration_cast<std::chrono::seconds>(
+                now - m_quality.last_valid_data).count();
+            
+            m_logger->error("Data quality unhealthy! consecutive_zero={}, total={}, silence={}s", 
+                          consecutive, total, silence);
             trigger_recovery();
+            
+            // 触发恢复后等待一段时间，避免重复触发
+            std::this_thread::sleep_for(std::chrono::seconds(10));
         }
     }
     
@@ -306,35 +317,38 @@ void UsbProvider::monitor_worker() {
 void UsbProvider::trigger_recovery() {
     m_logger->warn("Triggering recovery strategy...");
     
-    // Level 1: 触发 HySerial 重连
-    m_logger->info("Level 1: Triggering HySerial reconnect");
-    m_need_reconnect.store(true);
-    
-    // 等待一段时间，看是否恢复
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-    
-    // 检查是否仍然不健康
-    if (m_quality.is_unhealthy(m_zero_packet_threshold, m_timeout_sec)) {
-        // Level 2: USB 软重置
-        if (m_reset_enabled && !m_usb_port.empty()) {
-            m_logger->warn("Level 2: Performing USB soft reset");
+    // 直接执行 USB 软重置（Level 2）
+    if (m_reset_enabled && !m_usb_port.empty()) {
+        m_logger->warn("Performing USB soft reset for port: {}", m_usb_port);
+        
+        // 先停止当前的串口读取
+        if (m_serial) {
+            m_serial->stop_read();
+        }
+        
+        // 执行 USB unbind/bind
+        utils::UsbReset usb_reset(m_usb_port);
+        if (usb_reset.reset()) {
+            m_logger->info("USB reset successful, device should re-enumerate now");
             
-            utils::UsbReset usb_reset(m_usb_port);
-            if (usb_reset.reset()) {
-                m_logger->info("USB reset successful, waiting for device re-enumeration");
-                
-                // 等待设备重新枚举并触发重连
-                std::this_thread::sleep_for(std::chrono::seconds(3));
-                m_need_reconnect.store(true);
-                m_quality.reset();
-            } else {
-                m_logger->error("USB reset failed!");
-            }
+            // 等待设备重新枚举（USB reset 内部已经等待2秒）
+            // 再额外等待1秒确保设备完全就绪
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            
+            // 触发 HySerial 重连以使用新的设备
+            m_need_reconnect.store(true);
+            m_quality.reset();
+            
+            m_logger->info("Recovery completed, waiting for reconnection");
         } else {
-            m_logger->warn("USB reset is disabled or port not configured");
+            m_logger->error("USB reset failed! Falling back to HySerial reconnect");
+            // USB 重置失败，回退到 HySerial 重连
+            m_need_reconnect.store(true);
         }
     } else {
-        m_logger->info("Data quality recovered after HySerial reconnect");
+        // USB 重置未启用，使用 HySerial 重连
+        m_logger->info("USB reset disabled, using HySerial reconnect only");
+        m_need_reconnect.store(true);
     }
 }
 
