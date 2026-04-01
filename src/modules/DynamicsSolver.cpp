@@ -469,10 +469,12 @@ template<bool kFloating>
 std::pair<Eigen::Vector3d, Eigen::Matrix3d> 
 DynamicsSolver<kFloating>::computeFK(const common::VectorArm& arm_q)
 {
+    // 使用临时 data 对象，避免污染 m_data（主循环用于 solveIK 等）
+    pinocchio::Data temp_data(m_model);
     const Eigen::VectorXd full_q = buildFullQ(arm_q, m_current_gimbal_q);
-    pinocchio::forwardKinematics(m_model, m_data, full_q);
-    pinocchio::updateFramePlacements(m_model, m_data);
-    const pinocchio::SE3& se3 = m_data.oMf[m_tcp_frame_id];
+    pinocchio::forwardKinematics(m_model, temp_data, full_q);
+    pinocchio::updateFramePlacements(m_model, temp_data);
+    const pinocchio::SE3& se3 = temp_data.oMf[m_tcp_frame_id];
     return {se3.translation(), se3.rotation()};
 }
 

@@ -1067,7 +1067,42 @@ void yandy::Robot::handlePlanning() {
       m_planned_extract_path.push_back(q_interp);
     }
 
-    m_logger->info("IK solutions ready: pregrasp, target, extract");
+    // 验证 IK 解的准确性（通过 FK 反算）
+    auto [fk_pregrasp_pos, fk_pregrasp_rot] = withSolver([&](auto &s) {
+      return s.computeFK(m_q_pregrasp);
+    });
+    auto [fk_target_pos, fk_target_rot] = withSolver([&](auto &s) {
+      return s.computeFK(m_q_target);
+    });
+    auto [fk_extract_pos, fk_extract_rot] = withSolver([&](auto &s) {
+      return s.computeFK(m_q_extract);
+    });
+    
+    m_logger->info("IK solutions ready:");
+    m_logger->info("  pregrasp: q=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
+                   m_q_pregrasp[0], m_q_pregrasp[1], m_q_pregrasp[2],
+                   m_q_pregrasp[3], m_q_pregrasp[4], m_q_pregrasp[5]);
+    m_logger->info("  pregrasp FK: [{:.3f},{:.3f},{:.3f}] (expect [{:.3f},{:.3f},{:.3f}])",
+                   fk_pregrasp_pos.x(), fk_pregrasp_pos.y(), fk_pregrasp_pos.z(),
+                   (m_locked_target_pos - m_locked_approach_dir * 0.05).x(),
+                   (m_locked_target_pos - m_locked_approach_dir * 0.05).y(),
+                   (m_locked_target_pos - m_locked_approach_dir * 0.05).z());
+    m_logger->info("  target: q=[{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}]",
+                   m_q_target[0], m_q_target[1], m_q_target[2],
+                   m_q_target[3], m_q_target[4], m_q_target[5]);
+    m_logger->info("  target FK: [{:.3f},{:.3f},{:.3f}] (expect [{:.3f},{:.3f},{:.3f}])",
+                   fk_target_pos.x(), fk_target_pos.y(), fk_target_pos.z(),
+                   m_locked_target_pos.x(), m_locked_target_pos.y(), m_locked_target_pos.z());
+    m_logger->info("  extract FK: [{:.3f},{:.3f},{:.3f}]",
+                   fk_extract_pos.x(), fk_extract_pos.y(), fk_extract_pos.z());
+    
+    // 检查 FK 与目标的误差
+    const double pregrasp_fk_err = (fk_pregrasp_pos - (m_locked_target_pos - m_locked_approach_dir * 0.05)).norm();
+    const double target_fk_err = (fk_target_pos - m_locked_target_pos).norm();
+    if (pregrasp_fk_err > 0.05 || target_fk_err > 0.05) {
+      m_logger->warn("!!! FK verification failed: pregrasp_err={:.3f}m, target_err={:.3f}m",
+                     pregrasp_fk_err, target_fk_err);
+    }
 
     // 直接进入预抓取阶段（跳过 OMPL，使用 Ruckig 直接驱动）
     m_planner->brake();
