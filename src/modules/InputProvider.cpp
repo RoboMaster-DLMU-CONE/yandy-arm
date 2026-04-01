@@ -180,6 +180,8 @@ void UsbProvider::on_serial_read(std::span<const std::byte> data) {
   auto res = m_par.push_data(u8_data, size);
   if (!res) {
       m_logger->error("Parser push_data failed: {}", res.error().message);
+      // 解析失败也计入统计，避免监控失效
+      m_quality.total_packets.fetch_add(1, std::memory_order_relaxed);
   } else {
       const auto packet = m_des.get<YandyControlPack>();
       
@@ -292,8 +294,23 @@ void UsbProvider::DataQualityMonitor::reset() {
 void UsbProvider::monitor_worker() {
     m_logger->info("Data quality monitor thread started");
     
+    int check_count = 0;
     while (m_running.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(m_check_interval_sec));
+        
+        check_count++;
+        
+        // 每20次检查（40秒）输出一次状态，证明监控线程在运行
+        if (check_count % 20 == 0) {
+            auto consecutive = m_quality.consecutive_zero_packets.load();
+            auto total = m_quality.total_packets.load();
+            auto now = std::chrono::steady_clock::now();
+            auto silence = std::chrono::duration_cast<std::chrono::seconds>(
+                now - m_quality.last_valid_data).count();
+            
+            m_logger->info("Monitor alive: checks={}, total_packets={}, consecutive_zero={}, silence={}s", 
+                          check_count, total, consecutive, silence);
+        }
         
         if (m_quality.is_unhealthy(m_zero_packet_threshold, m_timeout_sec)) {
             auto consecutive = m_quality.consecutive_zero_packets.load();
@@ -307,6 +324,7 @@ void UsbProvider::monitor_worker() {
             trigger_recovery();
             
             // 触发恢复后等待一段时间，避免重复触发
+            m_logger->info("Waiting 10s before next check to avoid duplicate triggers");
             std::this_thread::sleep_for(std::chrono::seconds(10));
         }
     }
