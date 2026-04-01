@@ -1,4 +1,4 @@
-type = "usb" # udp / usb
+type = "udp" # udp / usb
 
 [udp]
 address = "0.0.0.0"
@@ -7,3 +7,11 @@ port = 11451
 [usb]
 device = "/dev/ttyACM0"
 baud_rate = 115200
+
+# USB 智能重置配置
+# 当检测到数据异常时自动执行 USB 软重置（需要 root 权限）
+reset_enabled = true                # 是否启用 USB 重置功能
+usb_port = "1-2"                    # USB 端口路径，如 "1-2" 或 "2-1.3"，设为 "auto" 自动检测
+check_interval_sec = 5              # 数据质量检查间隔（秒）
+zero_packet_threshold = 5           # 连续全0数据包阈值，超过此值触发重置
+timeout_sec = 10                    # 数据超时阈值（秒），超过此时间无数据触发重置

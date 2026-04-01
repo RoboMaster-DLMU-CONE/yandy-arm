@@ -1,5 +1,6 @@
 #include <yandy/core/Logger.hpp>
 #include <yandy/modules/InputProvider.hpp>
+#include <yandy/utils/UsbReset.hpp>
 
 #include <toml++/toml.hpp>
 
@@ -99,6 +100,30 @@ UsbProvider::UsbProvider() {
   auto device = tbl["usb"]["device"].value<std::string>().value();
   auto baud_rate = tbl["usb"]["baud_rate"].value<uint32_t>().value();
 
+  // 加载 USB 重置配置
+  m_reset_enabled = tbl["usb"]["reset_enabled"].value_or(false);
+  m_usb_port = tbl["usb"]["usb_port"].value_or(std::string("auto"));
+  m_check_interval_sec = tbl["usb"]["check_interval_sec"].value_or(5);
+  m_zero_packet_threshold = tbl["usb"]["zero_packet_threshold"].value_or(5);
+  m_timeout_sec = tbl["usb"]["timeout_sec"].value_or(10);
+
+  m_logger->info("USB Reset config: enabled={}, port={}, check_interval={}s, "
+                 "zero_threshold={}, timeout={}s",
+                 m_reset_enabled, m_usb_port, m_check_interval_sec,
+                 m_zero_packet_threshold, m_timeout_sec);
+
+  // 如果配置为 auto，尝试自动检测
+  if (m_reset_enabled && m_usb_port == "auto") {
+    auto detected_port = utils::UsbReset::detect_usb_port(device);
+    if (detected_port) {
+      m_usb_port = *detected_port;
+      m_logger->info("Auto-detected USB port: {}", m_usb_port);
+    } else {
+      m_logger->warn("Failed to auto-detect USB port, reset will be disabled");
+      m_reset_enabled = false;
+    }
+  }
+
   m_cfg.device_path = device;
   m_cfg.baud_rate = baud_rate;
   m_cfg.data_bits = HySerial::DataBits::BITS_8;
@@ -126,12 +151,21 @@ UsbProvider::UsbProvider() {
   m_serial->start_read();
   
   m_reconnect_thread = std::thread(&UsbProvider::reconnect_worker, this);
+  
+  // 启动监控线程
+  if (m_reset_enabled) {
+    m_monitor_thread = std::thread(&UsbProvider::monitor_worker, this);
+    m_logger->info("USB quality monitor started");
+  }
 }
 
 UsbProvider::~UsbProvider() {
   m_running.store(false);
   if (m_reconnect_thread.joinable()) {
       m_reconnect_thread.join();
+  }
+  if (m_monitor_thread.joinable()) {
+      m_monitor_thread.join();
   }
 }
 
@@ -148,6 +182,10 @@ void UsbProvider::on_serial_read(std::span<const std::byte> data) {
       m_logger->error("Parser push_data failed: {}", res.error().message);
   } else {
       const auto packet = m_des.get<YandyControlPack>();
+      
+      // 记录数据包质量
+      m_quality.record_packet(packet);
+      
       update_cmd(packet.cmd);
       m_buf.write(packet);
   }
@@ -185,11 +223,118 @@ void UsbProvider::reconnect_worker() {
                 m_serial->start_read();
                 m_logger->info("Serial connection restored successfully.");
                 m_need_reconnect.store(false);
+                
+                // 重置数据质量监控
+                m_quality.reset();
             } else {
                 m_logger->error("Failed to reconnect: {}", serial_or_err.error().message);
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
+// ===== 数据质量监控实现 =====
+
+bool UsbProvider::DataQualityMonitor::is_data_all_zero(const YandyControlPack& pack) {
+    // 检查所有浮点数字段是否都是0
+    return pack.x == 0.0f && pack.y == 0.0f && pack.z == 0.0f &&
+           pack.ee_qw == 0.0f && pack.ee_qx == 0.0f && 
+           pack.ee_qy == 0.0f && pack.ee_qz == 0.0f &&
+           pack.gimbal_z == 0.0f && pack.gimbal_yaw == 0.0f && 
+           pack.gimbal_pitch == 0.0f &&
+           pack.ax == 0.0f && pack.ay == 0.0f && pack.az == 0.0f &&
+           pack.gx == 0.0f && pack.gy == 0.0f && pack.gz == 0.0f &&
+           pack.qw == 0.0f && pack.qx == 0.0f && 
+           pack.qy == 0.0f && pack.qz == 0.0f;
+}
+
+void UsbProvider::DataQualityMonitor::record_packet(const YandyControlPack& pack) {
+    total_packets.fetch_add(1, std::memory_order_relaxed);
+    
+    if (is_data_all_zero(pack)) {
+        zero_packets.fetch_add(1, std::memory_order_relaxed);
+        consecutive_zero_packets.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        consecutive_zero_packets.store(0, std::memory_order_relaxed);
+        last_valid_data = std::chrono::steady_clock::now();
+    }
+}
+
+bool UsbProvider::DataQualityMonitor::is_unhealthy(int zero_threshold, int timeout_sec) {
+    auto now = std::chrono::steady_clock::now();
+    auto silence_duration = std::chrono::duration_cast<std::chrono::seconds>(
+        now - last_valid_data).count();
+    
+    // 条件1: 超时无有效数据
+    if (silence_duration > timeout_sec) {
+        return true;
+    }
+    
+    // 条件2: 连续全0数据包过多
+    if (consecutive_zero_packets.load(std::memory_order_relaxed) >= static_cast<uint64_t>(zero_threshold)) {
+        return true;
+    }
+    
+    return false;
+}
+
+void UsbProvider::DataQualityMonitor::reset() {
+    total_packets.store(0, std::memory_order_relaxed);
+    zero_packets.store(0, std::memory_order_relaxed);
+    consecutive_zero_packets.store(0, std::memory_order_relaxed);
+    last_valid_data = std::chrono::steady_clock::now();
+}
+
+void UsbProvider::monitor_worker() {
+    m_logger->info("Data quality monitor thread started");
+    
+    while (m_running.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(m_check_interval_sec));
+        
+        if (m_quality.is_unhealthy(m_zero_packet_threshold, m_timeout_sec)) {
+            auto consecutive = m_quality.consecutive_zero_packets.load();
+            m_logger->error("Data quality unhealthy detected! consecutive_zero_packets={}", 
+                          consecutive);
+            trigger_recovery();
+        }
+    }
+    
+    m_logger->info("Data quality monitor thread stopped");
+}
+
+void UsbProvider::trigger_recovery() {
+    m_logger->warn("Triggering recovery strategy...");
+    
+    // Level 1: 触发 HySerial 重连
+    m_logger->info("Level 1: Triggering HySerial reconnect");
+    m_need_reconnect.store(true);
+    
+    // 等待一段时间，看是否恢复
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    
+    // 检查是否仍然不健康
+    if (m_quality.is_unhealthy(m_zero_packet_threshold, m_timeout_sec)) {
+        // Level 2: USB 软重置
+        if (m_reset_enabled && !m_usb_port.empty()) {
+            m_logger->warn("Level 2: Performing USB soft reset");
+            
+            utils::UsbReset usb_reset(m_usb_port);
+            if (usb_reset.reset()) {
+                m_logger->info("USB reset successful, waiting for device re-enumeration");
+                
+                // 等待设备重新枚举并触发重连
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                m_need_reconnect.store(true);
+                m_quality.reset();
+            } else {
+                m_logger->error("USB reset failed!");
+            }
+        } else {
+            m_logger->warn("USB reset is disabled or port not configured");
+        }
+    } else {
+        m_logger->info("Data quality recovered after HySerial reconnect");
     }
 }
 

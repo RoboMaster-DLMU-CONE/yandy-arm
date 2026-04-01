@@ -11,6 +11,7 @@
 #include <boost/asio.hpp>
 #include <thread>
 #include <array>
+#include <chrono>
 
 namespace yandy::modules
 {
@@ -71,15 +72,45 @@ namespace yandy::modules
             ~UsbProvider() override;
 
         private:
+            // 数据质量监控结构
+            struct DataQualityMonitor {
+                std::atomic<uint64_t> total_packets{0};
+                std::atomic<uint64_t> zero_packets{0};
+                std::atomic<uint64_t> consecutive_zero_packets{0};
+                std::chrono::steady_clock::time_point last_valid_data;
+                
+                DataQualityMonitor() {
+                    last_valid_data = std::chrono::steady_clock::now();
+                }
+                
+                bool is_data_all_zero(const YandyControlPack& pack);
+                void record_packet(const YandyControlPack& pack);
+                bool is_unhealthy(int zero_threshold, int timeout_sec);
+                void reset();
+            };
+
             void on_serial_read(std::span<const std::byte> data);
             void on_serial_error(ssize_t e);
             void reconnect_worker();
+            void monitor_worker();
+            void trigger_recovery();
 
             std::unique_ptr<HySerial::Serial> m_serial;
             HySerial::SerialConfig m_cfg;
             std::atomic<bool> m_running{true};
             std::atomic<bool> m_need_reconnect{false};
             std::thread m_reconnect_thread;
+            std::thread m_monitor_thread;
+            
+            // 数据质量监控
+            DataQualityMonitor m_quality;
+            
+            // 配置参数
+            bool m_reset_enabled{false};
+            std::string m_usb_port;
+            int m_check_interval_sec{5};
+            int m_zero_packet_threshold{5};
+            int m_timeout_sec{10};
         };
     }
 

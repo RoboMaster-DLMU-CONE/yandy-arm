@@ -79,6 +79,7 @@ target_link_libraries(yandy_arm_fsm
 
 add_library(yandy_arm_input_provider SHARED
         modules/InputProvider.cpp
+        utils/UsbReset.cpp
 )
 
 target_link_libraries(yandy_arm_input_provider

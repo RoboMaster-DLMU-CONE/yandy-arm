@@ -892,12 +892,12 @@ void yandy::Robot::handlePlanning() {
   bool plan_success = false;
   
   // =========================================================================
-  // 双层容差策略：
-  // - 严格容差 (0.12): 优先选择精确解
-  // - 宽松容差 (0.25): 允许工作空间边缘的近似解 (位置误差~3cm, 方向误差~15°)
+  // FK 验证容差：
+  // - 严格容差 (0.08): 用于正常工作空间，位置误差 < 5cm
+  // - 宽松容差 (0.18): 用于边缘情况，位置误差 < 10cm
   // =========================================================================
-  constexpr double IK_TOL_STRICT = 0.12;   // 优先容差
-  constexpr double IK_TOL_RELAXED = 0.25;  // 最大可接受容差
+  constexpr double FK_TOL_STRICT = 0.08;  // 优先选择的精确解
+  constexpr double FK_TOL_MAX = 0.18;     // 最大可接受容差（边缘情况）
   
   // 减小预抓取距离，让预抓取点更靠近目标点
   const double effective_pregrasp = std::min(m_pregrasp_distance, 0.05);
@@ -921,46 +921,45 @@ void yandy::Robot::handlePlanning() {
         m_locked_target_pos + axis * m_extract_distance;
 
     // 2. 首先求解目标点 IK（用当前位置作为初值）
-    // 使用宽松容差，但记录实际误差用于排序
+    // 使用宽松容差让 IK 更容易收敛，但始终通过 FK 验证实际误差
     auto q_target_result = withSolver([&](auto &s) {
-      return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, IK_TOL_RELAXED);
+      return s.solveIK5DoF(target_pos, approach_dir, m_arm_state.q, FK_TOL_MAX);
     });
     
-    common::VectorArm q_target;
-    double target_err = 0.0;
-    if (q_target_result) {
-      q_target = q_target_result.value();
-      target_err = 0.0;  // 精确解
-    } else {
-      // 从 unexpected 中提取近似解
-      q_target = q_target_result.error();
-      // 计算实际误差
-      auto [pos, rot] = withSolver([&](auto &s) {
-        return s.computeFK(q_target);
-      });
-      target_err = (pos - target_pos).norm() + 
-                   (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
-      if (target_err > IK_TOL_RELAXED) continue;  // 超出最大容差
+    // 无论 IK 是否报告成功，都提取解并通过 FK 验证
+    common::VectorArm q_target = q_target_result ? q_target_result.value() 
+                                                  : q_target_result.error();
+    auto [target_fk_pos, target_fk_rot] = withSolver([&](auto &s) {
+      return s.computeFK(q_target);
+    });
+    double target_err = (target_fk_pos - target_pos).norm() + 
+                        (target_fk_rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+    
+    // 如果实际 FK 误差太大，跳过这个方向
+    if (target_err > FK_TOL_MAX) {
+      m_logger->debug("Direction [{:.2f},{:.2f},{:.2f}] rejected: target FK err={:.3f}",
+                      approach_dir.x(), approach_dir.y(), approach_dir.z(), target_err);
+      continue;
     }
 
     // 3. 再求解预抓取点 IK（以目标点为初值，保证连续性）
     auto q_pregrasp_result = withSolver([&](auto &s) {
-      return s.solveIK5DoF(pregrasp_pos, approach_dir, q_target, IK_TOL_RELAXED);
+      return s.solveIK5DoF(pregrasp_pos, approach_dir, q_target, FK_TOL_MAX);
     });
     
-    common::VectorArm q_pregrasp;
-    double pregrasp_err = 0.0;
-    if (q_pregrasp_result) {
-      q_pregrasp = q_pregrasp_result.value();
-      pregrasp_err = 0.0;
-    } else {
-      q_pregrasp = q_pregrasp_result.error();
-      auto [pos, rot] = withSolver([&](auto &s) {
-        return s.computeFK(q_pregrasp);
-      });
-      pregrasp_err = (pos - pregrasp_pos).norm() + 
-                     (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
-      if (pregrasp_err > IK_TOL_RELAXED) continue;
+    // 同样，始终通过 FK 验证
+    common::VectorArm q_pregrasp = q_pregrasp_result ? q_pregrasp_result.value()
+                                                      : q_pregrasp_result.error();
+    auto [pregrasp_fk_pos, pregrasp_fk_rot] = withSolver([&](auto &s) {
+      return s.computeFK(q_pregrasp);
+    });
+    double pregrasp_err = (pregrasp_fk_pos - pregrasp_pos).norm() + 
+                          (pregrasp_fk_rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+    
+    if (pregrasp_err > FK_TOL_MAX) {
+      m_logger->debug("Direction [{:.2f},{:.2f},{:.2f}] rejected: pregrasp FK err={:.3f}",
+                      approach_dir.x(), approach_dir.y(), approach_dir.z(), pregrasp_err);
+      continue;
     }
 
     // 4. 检查 J4/J6 变化量 (核心约束！)
@@ -988,22 +987,22 @@ void yandy::Robot::handlePlanning() {
 
     // 6. 求解提取点 IK
     auto q_extract_result = withSolver([&](auto &s) {
-      return s.solveIK5DoF(extract_pos, approach_dir, q_target, IK_TOL_RELAXED);
+      return s.solveIK5DoF(extract_pos, approach_dir, q_target, FK_TOL_MAX);
     });
     
-    common::VectorArm q_extract;
-    double extract_err = 0.0;
-    if (q_extract_result) {
-      q_extract = q_extract_result.value();
-      extract_err = 0.0;
-    } else {
-      q_extract = q_extract_result.error();
-      auto [pos, rot] = withSolver([&](auto &s) {
-        return s.computeFK(q_extract);
-      });
-      extract_err = (pos - extract_pos).norm() + 
-                    (rot.col(2) - approach_dir.normalized()).norm() * 0.5;
-      if (extract_err > IK_TOL_RELAXED) continue;
+    // 同样，始终通过 FK 验证
+    common::VectorArm q_extract = q_extract_result ? q_extract_result.value()
+                                                    : q_extract_result.error();
+    auto [extract_fk_pos, extract_fk_rot] = withSolver([&](auto &s) {
+      return s.computeFK(q_extract);
+    });
+    double extract_err = (extract_fk_pos - extract_pos).norm() + 
+                         (extract_fk_rot.col(2) - approach_dir.normalized()).norm() * 0.5;
+    
+    if (extract_err > FK_TOL_MAX) {
+      m_logger->debug("Direction [{:.2f},{:.2f},{:.2f}] rejected: extract FK err={:.3f}",
+                      approach_dir.x(), approach_dir.y(), approach_dir.z(), extract_err);
+      continue;
     }
 
     // 7. 检查目标→提取路径是否有碰撞
@@ -1096,12 +1095,17 @@ void yandy::Robot::handlePlanning() {
     m_logger->info("  extract FK: [{:.3f},{:.3f},{:.3f}]",
                    fk_extract_pos.x(), fk_extract_pos.y(), fk_extract_pos.z());
     
-    // 检查 FK 与目标的误差
+    // 检查 FK 与目标的误差（纯位置误差）
     const double pregrasp_fk_err = (fk_pregrasp_pos - (m_locked_target_pos - m_locked_approach_dir * 0.05)).norm();
     const double target_fk_err = (fk_target_pos - m_locked_target_pos).norm();
-    if (pregrasp_fk_err > 0.05 || target_fk_err > 0.05) {
-      m_logger->warn("!!! FK verification failed: pregrasp_err={:.3f}m, target_err={:.3f}m",
-                     pregrasp_fk_err, target_fk_err);
+    
+    // 根据误差大小给出不同级别的警告
+    if (target_fk_err > 0.08) {
+      m_logger->warn("!!! Large position error: target_err={:.1f}cm (> 8cm), pregrasp_err={:.1f}cm",
+                     target_fk_err * 100, pregrasp_fk_err * 100);
+    } else if (target_fk_err > 0.03) {
+      m_logger->info("Position error within tolerance: target_err={:.1f}cm, pregrasp_err={:.1f}cm",
+                     target_fk_err * 100, pregrasp_fk_err * 100);
     }
 
     // 直接进入预抓取阶段（跳过 OMPL，使用 Ruckig 直接驱动）
