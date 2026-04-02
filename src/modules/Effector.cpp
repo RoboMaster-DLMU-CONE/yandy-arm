@@ -180,17 +180,22 @@ public:
   }
 
   [[nodiscard]] bool isOpen() override {
-    if (m_state != State::Idle && m_state != State::Opening) {
-      return false;
-    }
     auto status = m_motor.getStatusPlain();
     float targetPos = m_offset - m_dir * m_stroke;
-    return std::abs(targetPos - status.reduced_angle_rad) < 0.1f;
+    float posError = std::abs(targetPos - status.reduced_angle_rad);
+    // 只要距离张开位置足够近，或者正在张开途中，都可以视为“非闭合”状态
+    // 但为了 Toggle 准确，这里判断是否“已经处于”张开位置
+    return posError < 0.15f; 
   }
 
   [[nodiscard]] bool isClosed() override {
+    if (m_state == State::Holding) {
+      return true;
+    }
     auto status = m_motor.getStatusPlain();
-    return std::abs(m_offset - status.reduced_angle_rad) < 0.1f;
+    // 判断是否在零点附近，或者已经越过了零点（往闭合方向走得更远）
+    float relativePos = m_dir * (status.reduced_angle_rad - m_offset);
+    return relativePos > -0.05f; // 只要不是在张开方向 0.05rad 之外，就认为关上了
   }
 
   [[nodiscard]] State getState() const override { return m_state; }
