@@ -11,27 +11,27 @@ id = 8
 dir = 1.0
 
 # MIT 模式参数
-mit_pid = { kp = 5.0, kd = 0.5 }
+mit_pid = { kp = 4.0, kd = 0.5 }
 
 # MIT 模式前馈力矩 (N·m)
-mit_feedforward_torque = 0.6
+mit_feedforward_torque = 0.3
 
 # 夹持力矩 (N·m) - 保持抓取时的力矩
-holding_torque = 1.0
+holding_torque = 0.9
 
 # 回零参数
-zeroing_torque = 2.0              # 回零时的恒定力矩 (N·m)
+zeroing_torque = 0.6              # 回零时的恒定力矩 (N·m)
 zeroing_velocity_threshold = 0.01 # 静止检测速度阈值 (rad/s)
 zeroing_stall_time_ms = 100       # 静止持续时间阈值 (ms)
 
 # 行程参数 (rad)
 # stroke: 从完全张开极限位置到闭合零点的位移量 (通常为正数)
-stroke = 1.0 
+stroke = 1.1
 
 # 碰撞检测参数
 # 电流阈值 (mA)：超过此值认为碰到物体
 # 建议值：2000-4000mA (根据实际夹爪力度调整)
-collision_current_threshold = 3000.0
+collision_current_threshold = 1500.0
 
 # 仿真参数
 sim_pos_max = 2.0    # 仿真模式下的最大位置 (rad)
