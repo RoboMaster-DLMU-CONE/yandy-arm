@@ -888,6 +888,20 @@ void yandy::Robot::handlePlanning() {
               return score_a > score_b;
             });
 
+  // 实机下限制逼近方向，降低“方向歪斜”概率（仿真保持原策略）
+  if (!m_is_simulate && !m_force_simulate_vision) {
+    std::vector<Eigen::Vector3d> filtered;
+    filtered.reserve(candidate_dirs.size());
+    for (const auto &d : candidate_dirs) {
+      if (d.x() > 0.70 && std::abs(d.y()) < 0.45) {
+        filtered.push_back(d);
+      }
+    }
+    if (!filtered.empty()) {
+      candidate_dirs = std::move(filtered);
+    }
+  }
+
   m_logger->info("Generated {} candidate approach directions", candidate_dirs.size());
 
   // =========================================================================
@@ -1037,7 +1051,7 @@ void yandy::Robot::handlePreGrasp() {
   const Eigen::Vector3d pregrasp_pos =
       m_locked_target_pos - m_locked_approach_dir * m_pregrasp_distance;
 
-  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir, true, 0.08)) {
+  if (!solveAndPlan5DoF(pregrasp_pos, m_locked_approach_dir, true, 0.10)) {
     return;
   }
 
@@ -1045,7 +1059,10 @@ void yandy::Robot::handlePreGrasp() {
       withSolver([](auto &s) { return s.getEndEffectorPose().translation(); });
   const double dist = (ee_pos - pregrasp_pos).norm();
 
-  if (dist < 0.05 && m_planner->isFinished()) {
+  const bool reached_pregrasp =
+      (dist < 0.05 && m_planner->isFinished()) ||
+      (dist < 0.065); // 实机容差放宽，避免在预抓取点附近抖动卡住
+  if (reached_pregrasp) {
     m_logger->info("Reached pre-grasp point, distance: {:.3f}m", dist);
     m_fetch_phase = FetchPhase::Approaching;
     m_current_standoff = m_pregrasp_distance;  // 初始化逐步逼近的距离

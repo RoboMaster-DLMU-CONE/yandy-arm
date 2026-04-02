@@ -24,8 +24,8 @@ port = 9876
 mode = "fixed"
 # 固定模式下的能量单元位姿 (base_link 坐标系)
 # position: [x, y, z] 单位 m; rpy: [roll, pitch, yaw] 单位 rad
-position = [0.48, 0.0, 0.48]
-rpy = [0.9, 1.57, 0]
+position = [0.46, 0.0, 0.51]
+rpy = [0, -1.57, 0]
 # 随机模式下的生成范围 (base_link 坐标系)
 random_x_range = [0.2, 0.4]
 random_y_range = [-0.2, 0.2]
@@ -37,9 +37,9 @@ random_pitch_range = [1.3, 1.9]
 [fetch]
 stability_window = 10       # 稳定性检测窗口 (帧数)
 stability_threshold = 0.005 # 位置方差阈值 (m)
-pregrasp_distance = 0.08    # 预抓取距离 (m)
+pregrasp_distance = 0.1     # 预抓取距离 (m)
 approach_speed = 0.1        # 逼近速度 (m/s)
-extract_distance = 0.1      # 提取距离：抓取后沿提取方向移动的距离 (m)
+extract_distance = 0.15     # 提取距离：抓取后沿提取方向移动的距离 (m)
 # 提取方向由视觉解析的能量单元位姿自动计算 (末端 X 轴 = 瓶口反方向)，无需手动配置
 
 [store]
