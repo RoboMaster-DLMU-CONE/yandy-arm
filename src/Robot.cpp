@@ -213,6 +213,11 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
         fetch["approach_speed"].value<double>().value_or(m_approach_speed);
     m_extract_distance =
         fetch["extract_distance"].value<double>().value_or(m_extract_distance);
+    m_object_axis_col =
+        fetch["object_axis_col"].value<int>().value_or(m_object_axis_col);
+    if (m_object_axis_col < 0 || m_object_axis_col > 2) {
+      m_object_axis_col = 0;
+    }
     m_fetch_pause_after_pregrasp_s =
         fetch["pause_after_pregrasp_s"].value<double>().value_or(
             m_fetch_pause_after_pregrasp_s);
@@ -221,9 +226,10 @@ yandy::Robot::Robot(one::can::CanDriver &can) : m_arm_hw(can), m_effector(can) {
   m_logger->info(
       "Fetch params: stability_window={}, stability_threshold={:.4f}, "
       "pregrasp_distance={:.3f}, approach_speed={:.3f}, "
-      "extract_distance={:.3f}, pause_after_pregrasp={:.3f}s",
+      "extract_distance={:.3f}, object_axis_col={}, pause_after_pregrasp={:.3f}s",
       m_stability_window, m_stability_threshold, m_pregrasp_distance,
-      m_approach_speed, m_extract_distance, m_fetch_pause_after_pregrasp_s);
+      m_approach_speed, m_extract_distance, m_object_axis_col,
+      m_fetch_pause_after_pregrasp_s);
 
   if (auto store = tbl["store"]; store.is_table()) {
     m_store_approach_offset = store["approach_offset"].value<double>().value_or(
@@ -805,18 +811,18 @@ void yandy::Robot::handleSeeking() {
     m_locked_target_pos = target_pose.translation();
     m_locked_target_pose = target_pose; // 存储完整位姿供 Planning 使用
 
-    // 视觉位姿的坐标系定义（PnP 解算结果）：
-    //   - X 轴：圆柱体中轴线 (能量单元高度方向)
-    //   - Y/Z 轴：在顶面/底面平面内 (径向)
+    // 视觉位姿轴向定义由配置 object_axis_col 指定（0/1/2），
+    // 这样可以适配 rotation_offset_rpy 调整后轴向列发生交换的情况。
+    const Eigen::Vector3d obj_axis =
+        target_pose.rotation().col(m_object_axis_col).normalized();
     //
     // 夹爪抓取策略：
     //   - 逼近方向 (approach_dir): 依赖于目标的 YZ 平面采样 (由 handlePlanning
     //   完成)
-    //   - 提取方向 (extract_dir): 默认沿 -X 轴 (假设瓶口在 -X 且垂直向上时)
+    //   - 提取方向 (extract_dir): 沿“瓶身轴反方向”
     m_locked_approach_dir =
         target_pose.rotation().col(1); // 临时，由 Planning 覆盖
-    m_locked_extract_dir =
-        -target_pose.rotation().col(0); // -X 轴 = 瓶口反方向 (假设瓶口在 -X)
+    m_locked_extract_dir = -obj_axis;
     m_locked_target_valid = true;       // 标记已锁定
 
     m_current_standoff = m_pregrasp_distance;
@@ -856,8 +862,8 @@ void yandy::Robot::handlePlanning() {
   // 3. 关节空间插值执行
   // =========================================================================
 
-  // 视觉位姿中，X 轴为圆柱体高度方向 (轴向)
-  Eigen::Vector3d axis = m_locked_target_pose.rotation().col(0);
+  // 视觉位姿中，瓶身轴向由配置 object_axis_col 指定
+  Eigen::Vector3d axis = m_locked_target_pose.rotation().col(m_object_axis_col);
   Eigen::Vector3d side1 = m_locked_target_pose.rotation().col(1); // Y 轴
   Eigen::Vector3d side2 = m_locked_target_pose.rotation().col(2); // Z 轴
 
@@ -1224,18 +1230,18 @@ bool yandy::Robot::isPoseStable() const {
   }
   pos_variance /= static_cast<double>(m_pose_history.size());
 
-  // 计算方向稳定性：检查 X 轴（能量单元主轴方向）的方差
+  // 计算方向稳定性：检查配置轴（能量单元主轴方向）的方差
   double orient_variance = 0.0;
 
-  // 计算 X 轴方向的一致性
   Eigen::Vector3d mean_x = Eigen::Vector3d::Zero();
   for (const auto &p : m_pose_history) {
-    mean_x += p.rotation().col(0); // X 轴
+    mean_x += p.rotation().col(m_object_axis_col);
   }
   mean_x.normalize();
 
   for (const auto &p : m_pose_history) {
-    const Eigen::Vector3d x_axis = p.rotation().col(0).normalized();
+    const Eigen::Vector3d x_axis =
+        p.rotation().col(m_object_axis_col).normalized();
     const double cos_theta = mean_x.dot(x_axis);
     orient_variance += std::acos(std::max(-1.0, std::min(1.0, cos_theta)));
   }
@@ -1267,9 +1273,10 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
   // 将世界 Z 轴 [0,0,1] 旋转到 approach_dir 的最短旋转，
   // 重点：尝试将末端 X 轴（夹爪手指方向）对齐到能量单元的主轴 (Bottle X)
   const Eigen::Vector3d z_des = approach_dir.normalized();
-  const Eigen::Vector3d bottle_axis = m_locked_target_pose.rotation().col(0);
+  const Eigen::Vector3d bottle_axis =
+      m_locked_target_pose.rotation().col(m_object_axis_col);
 
-  // 计算理想的 X 轴方向：BottleX 在与 z_des 垂直平面上的投影
+  // 计算理想的 X 轴方向：BottleAxis 在与 z_des 垂直平面上的投影
   Eigen::Vector3d x_des = (bottle_axis - z_des * (bottle_axis.dot(z_des))).normalized();
   Eigen::Matrix3d R_des;
 

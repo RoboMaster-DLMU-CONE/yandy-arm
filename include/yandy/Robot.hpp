@@ -199,6 +199,7 @@ private:
   double m_pregrasp_distance{0.05};    // 预抓取距离 (m)
   double m_approach_speed{0.05};       // 逼近速度 (m/s)
   double m_extract_distance{0.05};     // 提取距离 (m)
+  int m_object_axis_col{0};            // 视觉位姿中表示瓶身轴向的列索引 (0/1/2)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
   Eigen::Isometry3d m_locked_target_pose{Eigen::Isometry3d::Identity()}; // 锁定的目标完整位姿
