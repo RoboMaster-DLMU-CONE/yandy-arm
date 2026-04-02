@@ -915,6 +915,22 @@ void yandy::Robot::handlePlanning() {
     
     common::VectorArm q_pregrasp = q_pregrasp_result.value();
 
+    // 2.5 检查 current_q → pregrasp 是否会翻转（关键检查！）
+    {
+      double j4_delta = std::abs(q_pregrasp[3] - m_arm_state.q[3]);
+      double j6_delta = std::abs(q_pregrasp[5] - m_arm_state.q[5]);
+      if (j4_delta > M_PI) j4_delta = 2.0 * M_PI - j4_delta;
+      if (j6_delta > M_PI) j6_delta = 2.0 * M_PI - j6_delta;
+      
+      if (j4_delta > MAX_WRIST_DELTA || j6_delta > MAX_WRIST_DELTA) {
+        m_logger->debug("Direction [{:.2f},{:.2f},{:.2f}] rejected: wrist flip to pregrasp "
+                        "(J4={:.2f}, J6={:.2f})",
+                        approach_dir.x(), approach_dir.y(), approach_dir.z(),
+                        j4_delta, j6_delta);
+        continue;
+      }
+    }
+
     // 3. 简单路径检查（与旧版本相同）
     bool path_valid = true;
     common::VectorArm q_guess = q_pregrasp;
@@ -971,13 +987,23 @@ void yandy::Robot::handlePlanning() {
       auto q_sol = withSolver([&](auto &s) {
         return s.solveIK5DoF(pos, dir, m_arm_state.q, 0.18);  // 更宽松的容差
       });
-      if (q_sol) {
-        best_approach_dir = dir;
-        best_q_pregrasp = q_sol.value();
-        plan_success = true;
-        m_logger->info("+++ Fallback success (tol=0.18)");
-        break;
+      if (!q_sol) continue;
+      
+      // 检查 current_q → pregrasp 是否会翻转
+      double j4_delta = std::abs(q_sol.value()[3] - m_arm_state.q[3]);
+      double j6_delta = std::abs(q_sol.value()[5] - m_arm_state.q[5]);
+      if (j4_delta > M_PI) j4_delta = 2.0 * M_PI - j4_delta;
+      if (j6_delta > M_PI) j6_delta = 2.0 * M_PI - j6_delta;
+      
+      if (j4_delta > MAX_WRIST_DELTA || j6_delta > MAX_WRIST_DELTA) {
+        continue;
       }
+      
+      best_approach_dir = dir;
+      best_q_pregrasp = q_sol.value();
+      plan_success = true;
+      m_logger->info("+++ Fallback success (tol=0.18)");
+      break;
     }
   }
 
@@ -989,10 +1015,11 @@ void yandy::Robot::handlePlanning() {
                    m_locked_approach_dir.x(), m_locked_approach_dir.y(),
                    m_locked_approach_dir.z());
 
-    // 使用 OMPL 规划从当前位置到 pregrasp 的路径（与旧版本相同）
+    // 直接进入 PreGrasp 阶段，让 solveAndPlan5DoF 处理移动
+    // 不预先调用 OMPL，避免生成经过能量单元的路径
     m_planner->brake();
-    m_planner->requestPlan(m_arm_state.q, best_q_pregrasp);
-    m_ompl_pending = true;
+    m_ompl_pending = false;
+    m_ompl_executing = false;
     m_fetch_phase = FetchPhase::PreGrasp;
   } else {
     m_logger->error("--- No valid approach direction found! Aborting.");
@@ -1310,6 +1337,27 @@ bool yandy::Robot::solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
     const double delta = m_arm_state.q[i] - q_goal[i];
     const double n = std::round(delta / (2.0 * M_PI));
     q_goal[i] += 2.0 * M_PI * n;
+  }
+
+  // J4/J6 翻转检查：防止逼近/提取阶段末端大幅度翻转
+  {
+    double j4_delta = std::abs(q_goal[3] - m_arm_state.q[3]);
+    double j6_delta = std::abs(q_goal[5] - m_arm_state.q[5]);
+    // 处理 ±π 等价（因为上面已做 ±2π 调整，这里检查 ±π 跳变）
+    if (j4_delta > M_PI) j4_delta = 2.0 * M_PI - j4_delta;
+    if (j6_delta > M_PI) j6_delta = 2.0 * M_PI - j6_delta;
+
+    if (j4_delta > MAX_WRIST_DELTA || j6_delta > MAX_WRIST_DELTA) {
+      static int wrist_flip_warn_count = 0;
+      if (++wrist_flip_warn_count % 50 == 1) {
+        m_logger->warn("Wrist flip rejected: J4_delta={:.2f}, J6_delta={:.2f} (max={:.2f})",
+                       j4_delta, j6_delta, MAX_WRIST_DELTA);
+      }
+      // 保持当前位置，等下一帧目标点变化后再尝试
+      m_planner->update(m_arm_cmd.q_des, m_arm_cmd.v_des);
+      m_arm_hw.write(m_arm_cmd);
+      return false;
+    }
   }
 
   // 路径碰撞检测

@@ -148,9 +148,8 @@ public:
             // 更新新的零点
             m_offset = currentPos;
 
-            // 保持位置在新的零点的 -0.05rad 之前 (偏向张开方向)
-            float holdPosition = m_offset - m_dir * 0.05f;
-            enterHolding(holdPosition);
+            // 直接在当前位置保持，依靠 holdingTorque 提供纯粹的握力，避免 PD 控制器产生反向内耗
+            enterHolding(currentPos);
           } else {
             m_logger->info("在原零点之前检测到物体，切换到保持模式 "
                            "(pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
@@ -212,11 +211,16 @@ private:
 
     m_logger->info("回零运动方向: {}", zeroingDir > 0 ? "正向" : "反向");
 
-    // 往张开方向施加力矩直到堵转
-    m_motor.setPosRef(zeroingDir * 10.0f); // 目标设为一个较大的行程
-    m_motor.setTorRef(zeroingDir * m_zeroingTorque);
+    // 往张开方向平滑施加位置指令和恒定力矩，避免位置误差过大导致瞬间冲击
+    float current_target = m_motor.getStatusPlain().reduced_angle_rad;
+    float search_speed = 2.0f; // 寻找限位的速度 (rad/s)
+    float step = search_speed * (kLoopIntervalMs / 1000.0f);
 
     while (stallTimeMs < m_zeroingStallTimeMs) {
+      current_target += zeroingDir * step;
+      m_motor.setPosRef(current_target);
+      m_motor.setTorRef(zeroingDir * m_zeroingTorque);
+
       auto status = m_motor.getStatusPlain();
       float velocity = status.reduced_angular_rad_s;
 
