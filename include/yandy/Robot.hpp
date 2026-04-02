@@ -3,12 +3,12 @@
 
 #define YANDY_ROBOT_CONFIG YANDY_CONFIG_PATH "robot.toml"
 
-#include <chrono>
 #include <deque>
 #include <memory>
 #include <random>
 #include <thread>
 #include <variant>
+#include <chrono>
 
 #include <yandy/common/NBuf.hpp>
 #include <yandy/modules/ArmHW.hpp>
@@ -70,8 +70,7 @@ private:
   // 具体类型由 config/solver.toml 中的 floating_base 选项决定
   // 使用 withSolver() helper 访问，避免到处写 std::visit
   std::optional<std::variant<modules::DynamicsSolverFixed,
-                             modules::DynamicsSolverFloating>>
-      m_solver_var;
+                             modules::DynamicsSolverFloating>> m_solver_var;
 
   std::unique_ptr<modules::TrajectoryPlanner>
       m_planner; // 延迟构造，依赖 m_solver_var
@@ -100,10 +99,9 @@ private:
                                       // 系)
 
   // ---- 仿真视觉配置 ----
-  bool m_sim_vision_enabled{false}; // 仿真视觉是否启用
-  bool m_sim_vision_random{false};  // 是否使用随机模式
-  bool m_force_simulate_vision{
-      false}; // 强制使用仿真视觉（即使 simulate=false）
+  bool m_sim_vision_enabled{false};     // 仿真视觉是否启用
+  bool m_sim_vision_random{false};      // 是否使用随机模式
+  bool m_force_simulate_vision{false};  // 强制使用仿真视觉（即使 simulate=false）
   Eigen::Isometry3d m_sim_unit_pose{
       Eigen::Isometry3d::Identity()}; // 当前虚拟能量单元位姿
   std::array<double, 2> m_sim_x_range{};
@@ -122,32 +120,28 @@ private:
   // ---- 存取矿流程状态 ----
   enum class StorePhase {
     Approaching,   // move to above_pose
-    PauseAbove,    // dwell above before lowering
-    AtTarget,      // lowered to store_frame
-    OpenWait,      // waiting after opening claw
-    PostOpenLift,  // lift slightly above store_frame
-    Retreating,    // retreat along end-effector Z (negative direction)
-    PreFetch,      // move to pre-fetch position before retrieving
-    PausePreFetch, // dwell at pre-fetch position before lowering
-    Retracting     // used by retrieve flow (lift to above_pose)
+    PauseAbove,     // dwell above before lowering
+    AtTarget,       // lowered to store_frame
+    OpenWait,       // waiting after opening claw
+    PostOpenLift,   // lift slightly above store_frame
+    Retreating,     // retreat along end-effector Z (negative direction)
+    PreFetch,       // move to pre-fetch position before retrieving
+    PausePreFetch,  // dwell at pre-fetch position before lowering
+    Retracting      // used by retrieve flow (lift to above_pose)
   };
   StorePhase m_store_phase{StorePhase::Approaching};
 
   // Store behavior parameters (configurable via [store] in robot.toml)
   double m_store_approach_offset{0.3}; // store_frame Z 轴上偏移 (m)
-  double m_store_pause_after_above_s{
-      0.5}; // dwell time above before lowering (default)
-  double m_store_wait_before_open_s{
-      0.05}; // wait before opening claw (new, default)
-  double m_store_wait_after_open_s{0.3}; // wait after opening claw (default)
+  double m_store_pause_after_above_s{0.5}; // dwell time above before lowering (default)
+  double m_store_wait_before_open_s{0.05};  // wait before opening claw (new, default)
+  double m_store_wait_after_open_s{0.3};    // wait after opening claw (default)
   // wait after closing claw (during retrieve) before retracting (non-blocking)
   double m_store_wait_after_close_s{0.05};
-  double m_store_extra_z_above_store_m{
-      0.04}; // lift amount above store_frame after open
-  double m_store_retreat_distance_m{
-      0.10}; // retreat distance along -EE_Z (default)
-  // retreat pose in base frame (meters, radians). The final target uses
-  // absolute coordinates: For store_frame_2 (y<0), y and yaw/roll are mirrored.
+  double m_store_extra_z_above_store_m{0.04}; // lift amount above store_frame after open
+  double m_store_retreat_distance_m{0.10};    // retreat distance along -EE_Z (default)
+  // retreat pose in base frame (meters, radians). The final target uses absolute coordinates:
+  // For store_frame_2 (y<0), y and yaw/roll are mirrored.
   Eigen::Vector3d m_store_retreat_pos{0.07, 0.02, 0.03};
   Eigen::Vector3d m_store_retreat_rpy{0.0, 0.0, 0.0};
 
@@ -160,8 +154,7 @@ private:
   double m_store_pause_pre_fetch_s{0.1};
 
   // Phase timing
-  std::chrono::steady_clock::time_point m_store_phase_start{
-      std::chrono::steady_clock::now()};
+  std::chrono::steady_clock::time_point m_store_phase_start{std::chrono::steady_clock::now()};
 
   // ---- 抓取流程状态 ----
   enum class FetchPhase {
@@ -181,28 +174,24 @@ private:
       std::chrono::steady_clock::now()};
 
   // ---- 预规划路径 (Planning 阶段生成) ----
-  std::vector<common::VectorArm>
-      m_planned_approach_path; // 逼近路径 (PreGrasp -> Grasp)
-  std::vector<common::VectorArm>
-      m_planned_extract_path;   // 提取路径 (Grasp -> Extract)
+  std::vector<common::VectorArm> m_planned_approach_path; // 逼近路径 (PreGrasp -> Grasp)
+  std::vector<common::VectorArm> m_planned_extract_path;  // 提取路径 (Grasp -> Extract)
   size_t m_current_path_idx{0}; // 当前执行到的路径点索引
-
+  
   // ---- 分段规划 (新策略) ----
-  common::VectorArm m_q_pregrasp{common::VectorArm::Zero()}; // 预抓取点关节配置
-  common::VectorArm m_q_target{common::VectorArm::Zero()};   // 目标点关节配置
-  common::VectorArm m_q_extract{common::VectorArm::Zero()};  // 提取点关节配置
-  static constexpr double MAX_WRIST_DELTA =
-      M_PI * 0.8; // J4/J6 最大允许变化量 (144°)
+  common::VectorArm m_q_pregrasp{common::VectorArm::Zero()};  // 预抓取点关节配置
+  common::VectorArm m_q_target{common::VectorArm::Zero()};    // 目标点关节配置
+  common::VectorArm m_q_extract{common::VectorArm::Zero()};   // 提取点关节配置
+  static constexpr double MAX_WRIST_DELTA = M_PI * 0.8;       // J4/J6 最大允许变化量 (144°)
 
   // ---- 末端负载状态 ----
-  bool m_payload_attached{false};             // 是否有负载 (夹爪夹持物体)
-  static constexpr double PAYLOAD_MASS = 0.8; // 负载质量 (kg) - 600g
-  void updatePayloadMass(); // 根据夹爪状态更新动力学模型中的负载质量
+  bool m_payload_attached{false};         // 是否有负载 (夹爪夹持物体)
+  static constexpr double PAYLOAD_MASS = 0.6; // 负载质量 (kg) - 600g
+  void updatePayloadMass();               // 根据夹爪状态更新动力学模型中的负载质量
 
   // 在退出 Fetching 模式后忽略下一次 manual 目标下发，避免回到视觉初始点
   bool m_ignore_next_manual{false};
-  // 在退出 Fetching 模式后限制返回 Manual 时末端 roll 变化（只在首次 Manual
-  // 有效）
+  // 在退出 Fetching 模式后限制返回 Manual 时末端 roll 变化（只在首次 Manual 有效）
   bool m_limit_return_roll{false};
 
   int m_stability_window{10};          // 稳定性检测窗口 (帧数)
@@ -212,28 +201,27 @@ private:
   double m_extract_distance{0.05};     // 提取距离 (m)
 
   std::deque<Eigen::Isometry3d> m_pose_history; // 视觉测量历史 (用于稳定性判断)
-  Eigen::Isometry3d m_locked_target_pose{
-      Eigen::Isometry3d::Identity()}; // 锁定的目标完整位姿
+  Eigen::Isometry3d m_locked_target_pose{Eigen::Isometry3d::Identity()}; // 锁定的目标完整位姿
   Eigen::Vector3d m_locked_target_pos{
       Eigen::Vector3d::Zero()}; // 锁定的目标位置
   Eigen::Vector3d m_locked_approach_dir{
-      Eigen::Vector3d::UnitZ()}; // 锁定的逼近方向
+      Eigen::Vector3d::UnitZ()};                // 锁定的逼近方向
   Eigen::Vector3d m_locked_extract_dir{
-      -Eigen::Vector3d::UnitX()};    // 锁定的提取方向 (= 锁定位姿 -R.col(0) =
-                                     // 瓶口反方向)
-  bool m_locked_target_valid{false}; // 目标位姿是否已锁定
-  double m_current_standoff{
-      0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
+      -Eigen::Vector3d::UnitX()};               // 锁定的提取方向 (= 锁定位姿 -R.col(0) = 瓶口反方向)
+  bool m_locked_target_valid{false};            // 目标位姿是否已锁定
+  double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
   double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
 
   // ---- withSolver helper (避免到处写 std::visit) ────────────────────────
   // 用法: withSolver([&](auto& s) { return s.someMethod(...); })
   // 注: m_solver_var 是 optional，构造完成后始终有值，* 解引用安全
-  template <typename F> decltype(auto) withSolver(F &&f) {
-    return std::visit(std::forward<F>(f), *m_solver_var);
+  template<typename F>
+  decltype(auto) withSolver(F&& f) {
+      return std::visit(std::forward<F>(f), *m_solver_var);
   }
-  template <typename F> decltype(auto) withSolver(F &&f) const {
-    return std::visit(std::forward<F>(f), *m_solver_var);
+  template<typename F>
+  decltype(auto) withSolver(F&& f) const {
+      return std::visit(std::forward<F>(f), *m_solver_var);
   }
 
   // ---- 私有方法 ----
@@ -257,7 +245,8 @@ private:
   Eigen::Vector3d computeApproachDirection(double roll, double pitch) const;
   bool solveAndPlan5DoF(const Eigen::Vector3d &target_pos,
                         const Eigen::Vector3d &approach_dir,
-                        bool use5DoF = false, double tol = 0.01);
+                        bool use5DoF = false,
+                        double tol = 0.01);
 
   // 从 YandyControlPack 提取云台状态
   void updateGimbalFromPack(const YandyControlPack &pack);
