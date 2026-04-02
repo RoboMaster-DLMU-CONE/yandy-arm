@@ -9,10 +9,11 @@ namespace yandy::modules {
 class IEffector {
 public:
   enum class State {
-    Idle,    // 空闲
-    Opening, // 正在张开
-    Closing, // 正在闭合
-    Holding  // 夹持保持
+    Idle,     // 空闲
+    Opening,  // 正在张开
+    Closing,  // 正在闭合（寻找物体）
+    Gripping, // 爆发夹紧（瞬时大扭矩）
+    Holding   // 持续持握（低功耗维持）
   };
 
   virtual ~IEffector() = default;

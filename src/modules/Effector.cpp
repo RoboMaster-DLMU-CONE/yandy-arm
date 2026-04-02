@@ -33,7 +33,10 @@ public:
     m_mitKd = kd;
     m_mitFeedforwardTorque =
         tbl["mit_feedforward_torque"].value<float>().value();
+    m_grippingTorque = tbl["gripping_torque"].value<float>().value();
     m_holdingTorque = tbl["holding_torque"].value<float>().value();
+    m_grippingDurationTicks =
+        tbl["gripping_duration_ms"].value<int>().value() / 4; // 250Hz = 4ms/tick
 
     m_zeroingTorque = tbl["zeroing_torque"].value<float>().value();
     m_zeroingVelocityThreshold =
@@ -134,32 +137,24 @@ public:
                              m_zeroingVelocityThreshold * 2.0f;
 
         if (collision) {
-          // 判断碰撞位置是否在原零点之后
-          // 因为 m_dir 是闭合方向，所以 m_dir * (currentPos - m_offset)
-          // 如果大于 0，说明超过了原零点 举例：m_dir = -1, m_offset =
-          // 0。currentPos = -0.1，则 -1 * (-0.1 - 0) = 0.1 > 0
-          bool is_past_zero = (m_dir * (currentPos - m_offset) > 0.0f);
-
-          if (is_past_zero) {
-            m_logger->info("在原零点之后检测到物体，更新零点并切换到保持模式 "
-                           "(pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
-                           currentPos, m_offset, currentMA);
-
-            // 更新新的零点
-            m_offset = currentPos;
-
-            // 直接在当前位置保持，依靠 holdingTorque 提供纯粹的握力，避免 PD 控制器产生反向内耗
-            enterHolding(currentPos);
-          } else {
-            m_logger->info("在原零点之前检测到物体，切换到保持模式 "
-                           "(pos={:.3f}, 原零点={:.3f}, current={:.1f}mA)",
-                           currentPos, m_offset, currentMA);
-            enterHolding(currentPos);
+          if (m_dir * (status.reduced_angle_rad - m_offset) > 0.0f) {
+            m_logger->info("在原零点之后检测到物体，更新零点 (pos={:.3f})",
+                           status.reduced_angle_rad);
+            m_offset = status.reduced_angle_rad;
           }
+          enterGripping(status.reduced_angle_rad);
         }
       }
 
       m_prevCurrent = currentMA;
+      break;
+    }
+
+    case State::Gripping: {
+      m_grippingTickCount++;
+      if (m_grippingTickCount >= m_grippingDurationTicks) {
+        enterHolding(status.reduced_angle_rad);
+      }
       break;
     }
 
@@ -176,7 +171,7 @@ public:
   }
 
   [[nodiscard]] bool isHolding() const override {
-    return m_state == State::Holding;
+    return m_state == State::Holding || m_state == State::Gripping;
   }
 
   [[nodiscard]] bool isOpen() override {
@@ -254,6 +249,15 @@ private:
     m_motor.setTorRef(0);
   }
 
+  void enterGripping(float holdPosition) {
+    m_state = State::Gripping;
+    m_grippingTickCount = 0;
+    m_motor.setPosRef(holdPosition);
+    m_motor.setTorRef(m_dir * m_grippingTorque);
+    m_logger->info("进入爆发夹紧模式 ({:.1f}N·m, {}ms)", m_grippingTorque,
+                   m_grippingDurationTicks * 4);
+  }
+
   void enterHolding(float holdPosition) {
     m_state = State::Holding;
     m_motor.setPosRef(holdPosition);
@@ -269,6 +273,7 @@ private:
   float m_mitKp = 5.0f;
   float m_mitKd = 0.5f;
   float m_mitFeedforwardTorque = 0.2f;
+  float m_grippingTorque = 1.5f;
   float m_holdingTorque = 1.0f;
 
   State m_state = State::Idle;
@@ -278,6 +283,8 @@ private:
   float m_prevCurrent = 0.0f;
   bool m_firstUpdateInClosing = true;
   int m_closingStartTicks = 0;
+  int m_grippingTickCount = 0;
+  int m_grippingDurationTicks = 50; // 250Hz * 0.2s = 50 ticks
 
   float m_zeroingTorque = 0.18f;
   float m_zeroingVelocityThreshold = 0.05f;
@@ -373,7 +380,7 @@ public:
   }
 
   [[nodiscard]] bool isHolding() const override {
-    return m_state == State::Holding;
+    return m_state == State::Holding || m_state == State::Gripping;
   }
 
   [[nodiscard]] bool isOpen() override {

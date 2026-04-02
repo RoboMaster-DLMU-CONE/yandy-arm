@@ -16,8 +16,14 @@ mit_pid = { kp = 4.0, kd = 0.5 }
 # MIT 模式前馈力矩 (N·m)
 mit_feedforward_torque = 0.3
 
-# 夹持力矩 (N·m) - 保持抓取时的力矩
-holding_torque = 0.9
+# 夹持力矩 (N·m)
+# gripping_torque: 检测到物体后爆发的“瞬时高压”力矩 (建议 1.5-2.5N·m)
+# gripping_duration_ms: 爆发时间，单位毫秒 (建议 200-500ms)
+gripping_torque = 2.0
+gripping_duration_ms = 300
+
+# holding_torque: 保持抓取时的维持力矩 (建议 0.5-1.0N·m)
+holding_torque = 0.8 
 
 # 回零参数
 zeroing_torque = 0.6              # 回零时的恒定力矩 (N·m)
