@@ -1,6 +1,6 @@
 [yolo]
 thres = 0.5
-device = "CPU"
+device = "GPU"
 model = "best.onnx" # 需要放在config/yolo下
 
 [camera]
@@ -8,8 +8,11 @@ model = "best.onnx" # 需要放在config/yolo下
 intrinsics = [612.4961, 0.0, 482.8151, 0.0, 612.3061, 301.7057, 0.0, 0.0, 1.0]
 distortion = [-0.3433, 0.1684, 0.0, 0.0, 0.0]
 
-# 相机安装旋转补偿 / 物体朝向修正 (绕Z, Y, X轴的外旋欧拉角，单位: 弧度)
+rotation_offset_rpy = [
+  4.71,
+  1.57,
+  0.0,
+] # 相机安装旋转补偿 / 物体朝向修正 (绕Z, Y, X轴的外旋欧拉角，单位: 弧度)
 # 若解算出的能量单元方向有固定偏差（如绕Z轴逆时针旋转90度才正确），可在此处配置
 # 例如绕 Z 轴逆时针旋转90度 (1.570796 rad): [0.0, 0.0, 1.570796]
 # 格式为: [roll(X), pitch(Y), yaw(Z)]
-rotation_offset_rpy = [0.0, 0.0, 1.570796]
