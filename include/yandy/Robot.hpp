@@ -212,6 +212,7 @@ private:
   bool m_locked_target_valid{false};            // 目标位姿是否已锁定
   double m_current_standoff{0.05}; // 当前距目标距离 (初始值同 pregrasp_distance)
   double m_current_extract_offset{0.0}; // 当前提取偏移量 (m)
+  int m_extract_fail_counter{0};         // 提取阶段连续 IK 失败计数
 
   // ---- withSolver helper (避免到处写 std::visit) ────────────────────────
   // 用法: withSolver([&](auto& s) { return s.someMethod(...); })

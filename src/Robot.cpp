@@ -451,13 +451,19 @@ void yandy::Robot::start() {
       auto vis = m_vision_buf.try_read();
       if (vis.has_value() && vis->valid) {
         vd.vision_valid = true;
-        vd.vision_unit_pose = vis->unit_pose;
-        vd.vision_unit_pose_base =
-            (m_is_simulate || m_force_simulate_vision)
-                ? m_sim_cam_pose * vis->unit_pose
-                : withSolver([&](auto &s) {
-                    return s.transformObjectToBase(vis->unit_pose);
-                  });
+        // Fetch 锁定后可视化固定到锁定位姿，避免 rerun 里“目标乱飞”干扰判断
+        if (cur_state == YandyState::Fetching && m_locked_target_valid) {
+          vd.vision_unit_pose = vis->unit_pose;
+          vd.vision_unit_pose_base = m_locked_target_pose;
+        } else {
+          vd.vision_unit_pose = vis->unit_pose;
+          vd.vision_unit_pose_base =
+              (m_is_simulate || m_force_simulate_vision)
+                  ? m_sim_cam_pose * vis->unit_pose
+                  : withSolver([&](auto &s) {
+                      return s.transformObjectToBase(vis->unit_pose);
+                    });
+        }
       }
 
       m_viz_buf.write(vd);
@@ -1104,6 +1110,7 @@ void yandy::Robot::handleApproaching() {
     m_fsm.setMineralAttached(true);
 
     m_current_extract_offset = 0.0;
+    m_extract_fail_counter = 0;
     m_fetch_phase = FetchPhase::Extracting;
     m_logger->info(
         "Grasp complete, starting extraction along [{:.3f},{:.3f},{:.3f}]...",
@@ -1122,9 +1129,17 @@ void yandy::Robot::handleExtracting() {
   const Eigen::Vector3d current_target =
       m_locked_target_pos + m_locked_extract_dir * m_current_extract_offset;
 
-  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir)) {
+  if (!solveAndPlan5DoF(current_target, m_locked_approach_dir, true, 0.15)) {
+    ++m_extract_fail_counter;
+    // 实机提取到顶附近若连续失败，直接结束提取避免“卡死不动”
+    if (m_extract_fail_counter > 100) {
+      m_logger->warn("Extract fallback: consecutive IK failures={}, finishing extract",
+                     m_extract_fail_counter);
+      m_fetch_phase = FetchPhase::Withdrawing;
+    }
     return;
   }
+  m_extract_fail_counter = 0;
 
   // 检查是否完成提取
   if (m_current_extract_offset >= m_extract_distance && m_planner->isFinished()) {
@@ -1181,6 +1196,7 @@ void yandy::Robot::resetFetchState() {
   m_q_pregrasp.setZero();
   m_q_target.setZero();
   m_q_extract.setZero();
+  m_extract_fail_counter = 0;
 }
 
 void yandy::Robot::updatePayloadMass() {
